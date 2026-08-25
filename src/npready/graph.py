@@ -6,15 +6,27 @@ and the literal evidence that justified it. The union across sources is the set 
 edges the application *declares* it needs — including the rare ones that fire on
 events a benign observation window never triggers.
 
+Design principle — VERIFY, don't guess.
+
+A dependency exists when a workload's configuration contains a value that RESOLVES to
+a Service that actually exists in this cluster. We do not guess from naming
+conventions: we tokenise every configuration surface and resolve each candidate
+against the live Service catalog. That makes derivation self-configuring per cluster
+and independent of language, framework, or variable-naming style. (An early version
+only fired on env names matching ``_HOST|_URL|_ADDR|...`` — it missed real
+dependencies like ``mongo=user-db:27017`` purely because of how the variable was
+named.) The name pattern survives only as a *confidence signal*, never as a filter.
+
 Sources (each independent, each auditable):
-  S1  workload env endpoints        MYSVC_ADDR=redis:6379            -> caller -> backend
+  S1  config-surface endpoints      any env/ConfigMap/argv value that resolves to a
+                                    Service in the catalog -> caller -> backend
   S3  Ingress / Gateway routes      ingress backend service          -> ingress -> backend
-  S4  cluster DNS invariant         every pod resolves names         -> workload -> kube-dns:53
+  S4  cluster DNS invariant         every pod resolves names         -> workload -> <dns svc>:53
   S5  RBAC bindings                 ServiceAccount bound to a role   -> workload -> kube-apiserver
   S6  headless Service peers        StatefulSet behind headless svc  -> peer <-> peer
 
-(S2 "Service catalog" is the DNS-name -> backing-workload resolver used by S1 and
-S3, not a standalone edge source, so it has no emit step of its own.)
+S2 (the Service catalog) is not a separate emitter — it is the resolver that makes
+S1 and S3 verification rather than guesswork.
 """
 from __future__ import annotations
 
@@ -24,9 +36,12 @@ from typing import Optional
 from .inventory import Inventory, Service, Workload
 from .model import Edge, EdgeClass, Provenance
 
-# Env var names that name a network peer (twelve-factor style).
+# A *confidence signal* only — never a filter. A variable named this way that also
+# resolves is near-certain; one named anything else that resolves is still a real edge.
 ENDPOINT_RE = re.compile(
     r"(_HOST|_HOSTNAME|_URL|_URI|_ENDPOINT|_ADDR|_ADDRESS|_SERVER|_BROKER|_BROKERS|_DSN)$")
+# Values often carry several endpoints (broker lists, comma/space separated).
+TOKEN_SPLIT_RE = re.compile(r"[\s,;|]+")
 # Strip an optional scheme (http://, redis://, postgres://, tcp://, nats://, ...).
 SCHEME_RE = re.compile(r"^[a-z][a-z0-9+.\-]*://")
 # From the remaining "host[:port][/path]" (or "user:pass@host:port"), take host+port.
@@ -51,13 +66,28 @@ def _parse_endpoint(val: str):
 
 
 def _resolve_host(host: str, caller: Workload, svc_index: dict) -> Optional[Service]:
-    """DNS name (short or FQDN) -> the Service object it addresses, if in-cluster."""
+    """DNS name -> the Service it addresses, if in-cluster.
+
+    Handles the three in-cluster forms, resolving against the catalog rather than
+    assuming a shape:
+      ``svc``                          short name in the caller's namespace
+      ``svc.ns`` / ``svc.ns.svc...``   namespace-qualified
+      ``pod-0.svc`` / ``pod-0.svc.ns`` StatefulSet pod-qualified (headless), where the
+                                       FIRST label is a pod, not the Service
+    """
     host = host.strip().lower()
     host = host.removesuffix(CLUSTER_SUFFIX)
-    parts = host.split(".")
-    short = parts[0]
-    ns = parts[1] if len(parts) > 1 else caller.ns
-    return svc_index.get((ns, short)) or svc_index.get((caller.ns, short))
+    parts = [p for p in host.split(".") if p]
+    if not parts:
+        return None
+    # try each label as the Service name, with the next label as its namespace.
+    # this covers svc, svc.ns and pod-0.svc / pod-0.svc.ns without special-casing.
+    for i, label in enumerate(parts):
+        ns = parts[i + 1] if i + 1 < len(parts) else caller.ns
+        hit = svc_index.get((ns, label)) or svc_index.get((caller.ns, label))
+        if hit is not None:
+            return hit
+    return None
 
 
 def _looks_external(host: str) -> bool:
@@ -81,30 +111,81 @@ def _safe_evidence(name: str, host: str, port) -> str:
 
 
 # ---------------------------------------------------------------- S1
+def _candidates(val: str) -> list:
+    """Endpoint candidates inside one configuration value.
+
+    A value can be a bare endpoint, a list of them, or carry an assignment prefix
+    (``--broker=queue:5672``, ``spring.redis.host=cache``). We yield the token and,
+    when present, the part after the last ``=`` — so flag- and property-style config
+    is covered without knowing the flag vocabulary.
+    """
+    out = []
+    for token in TOKEN_SPLIT_RE.split(val or ""):
+        if not token or len(token) > 253:
+            continue
+        out.append(token)
+        if "=" in token:
+            tail = token.rsplit("=", 1)[1]
+            if tail:
+                out.append(tail)
+    return out
+
+
+def _config_surfaces(w: Workload, configmaps: dict) -> list:
+    """Every place a workload can declare an endpoint, as (origin, key, value).
+
+    We scan *all* of them rather than a curated subset, because which surface a team
+    uses is a convention we must not assume: env values, the ConfigMaps the workload
+    mounts/references, and the container command line.
+    """
+    out = [("env", k, v) for k, v in w.env]
+    for cm in sorted(w.configmap_refs):
+        for k, v in (configmaps.get((w.ns, cm)) or {}).items():
+            out.append((f"configmap/{cm}", k, str(v)))
+    if w.argv:
+        out.append(("argv", "command", w.argv))
+    return out
+
+
 def s1_env_endpoints(inv: Inventory, svc_index: dict) -> list:
+    """Resolve every configuration value against the Service catalog.
+
+    An edge is emitted only when a parsed host token EXACTLY matches a Service that
+    exists in this cluster (or is a clearly external FQDN). Exact-match resolution is
+    what keeps this general without becoming noisy: ``MYSQL_DATABASE=socksdb`` resolves
+    to nothing and is silently ignored, while ``mongo=user-db:27017`` resolves to the
+    real ``user-db`` Service and becomes an edge — despite the variable's name.
+    """
+    configmaps = getattr(inv, "configmaps", {}) or {}
     edges = []
     for w in inv.workloads:
-        for name, val in w.env:
-            if not ENDPOINT_RE.search(name):
-                continue
-            host, p = _parse_endpoint(val)
-            if not host:
-                continue
-            svc = _resolve_host(host, w, svc_index)
-            if svc is not None:
-                if svc.kind == "ExternalName":
-                    edges.append(Edge(w.id, "world", p, EdgeClass.EGRESS,
-                                      Provenance.S1_ENV_ENDPOINT, evidence=_safe_evidence(name, host, p)))
+        for origin, key, val in _config_surfaces(w, configmaps):
+            named_like_endpoint = bool(ENDPOINT_RE.search(key))
+            for token in _candidates(val):
+                host, p = _parse_endpoint(token)
+                if not host:
                     continue
-                port_final = p or (svc.ports[0][0] if svc.ports else None)
-                for tgt in inv.workloads_backing(svc):
-                    if tgt.id != w.id:
-                        edges.append(Edge(w.id, tgt.id, port_final, EdgeClass.IN_CLUSTER,
-                                          Provenance.S1_ENV_ENDPOINT,
-                                          evidence=_safe_evidence(name, host, port_final)))
-            elif _looks_external(host):
-                edges.append(Edge(w.id, "world", p, EdgeClass.EGRESS,
-                                  Provenance.S1_ENV_ENDPOINT, evidence=_safe_evidence(name, host, p)))
+                svc = _resolve_host(host, w, svc_index)
+                # confidence: the value resolved either way; a conventional variable
+                # name is corroborating evidence, not a precondition.
+                conf = 1.0 if named_like_endpoint else 0.75
+                ev = _safe_evidence(f"{origin}:{key}", host, p)
+                if svc is not None:
+                    if svc.kind == "ExternalName":
+                        edges.append(Edge(w.id, "world", p, EdgeClass.EGRESS,
+                                          Provenance.S1_ENV_ENDPOINT, conf, ev))
+                        continue
+                    port_final = p or (svc.ports[0][0] if svc.ports else None)
+                    for tgt in inv.workloads_backing(svc):
+                        if tgt.id != w.id:
+                            edges.append(Edge(w.id, tgt.id, port_final, EdgeClass.IN_CLUSTER,
+                                              Provenance.S1_ENV_ENDPOINT, conf,
+                                              _safe_evidence(f"{origin}:{key}", host, port_final)))
+                elif named_like_endpoint and _looks_external(host):
+                    # only trust an *unresolvable* host as egress when the variable is
+                    # conventionally named — otherwise arbitrary text becomes "world".
+                    edges.append(Edge(w.id, "world", p, EdgeClass.EGRESS,
+                                      Provenance.S1_ENV_ENDPOINT, conf, ev))
     return edges
 
 

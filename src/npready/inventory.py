@@ -29,6 +29,8 @@ class Workload:
     service_account: str = "default"
     env: list = field(default_factory=list)          # list[(name, value)]
     host_network: bool = False
+    configmap_refs: set = field(default_factory=set)  # ConfigMap names this workload consumes
+    argv: str = ""                                     # container command+args, joined (S7 scan)
 
     @property
     def id(self) -> str:
@@ -59,6 +61,7 @@ class Inventory:
     ingresses: list = field(default_factory=list)       # raw dicts
     rolebindings: list = field(default_factory=list)    # raw dicts (Role + ClusterRole)
     namespace_labels: dict = field(default_factory=dict)  # ns name -> labels (for namespaceSelector)
+    configmaps: dict = field(default_factory=dict)      # (ns, name) -> {key: value} (S1 surfaces)
 
     # ----------------------------------------------------------------- loaders
     @classmethod
@@ -91,6 +94,7 @@ class Inventory:
             "ingresses": kget("ingresses"),
             "rolebindings": kget("rolebindings") + kget("clusterrolebindings"),
             "namespaces": kget("namespaces"),
+            "configmaps": kget("configmaps"),
         }
         return cls._from_raw(raw)
 
@@ -118,13 +122,14 @@ class Inventory:
                         docs.append(doc)
         buckets: dict = {k: [] for k in
                          ("deployments", "statefulsets", "daemonsets", "services",
-                          "networkpolicies", "ingresses", "rolebindings", "namespaces")}
+                          "networkpolicies", "ingresses", "rolebindings", "namespaces",
+                          "configmaps")}
         kind_map = {
             "Deployment": "deployments", "StatefulSet": "statefulsets",
             "DaemonSet": "daemonsets", "Service": "services",
             "NetworkPolicy": "networkpolicies", "Ingress": "ingresses",
             "RoleBinding": "rolebindings", "ClusterRoleBinding": "rolebindings",
-            "Namespace": "namespaces",
+            "Namespace": "namespaces", "ConfigMap": "configmaps",
         }
         for d in docs:
             b = kind_map.get(d["kind"])
@@ -142,11 +147,24 @@ class Inventory:
                 spec = w.get("spec", {})
                 tmpl = (spec.get("template") or {}).get("spec", {}) or {}
                 tmeta = (spec.get("template") or {}).get("metadata", {}) or {}
-                env = []
-                for c in (tmpl.get("containers") or []):
+                env, cm_refs, argv = [], set(), []
+                containers = (tmpl.get("containers") or []) + (tmpl.get("initContainers") or [])
+                for c in containers:
                     for e in (c.get("env") or []):
                         if isinstance(e, dict) and e.get("value") is not None:
                             env.append((e["name"], str(e["value"])))
+                        # envFrom-style single ref
+                        ref = ((e or {}).get("valueFrom") or {}).get("configMapKeyRef") or {}
+                        if ref.get("name"):
+                            cm_refs.add(ref["name"])
+                    for ef in (c.get("envFrom") or []):
+                        if (ef.get("configMapRef") or {}).get("name"):
+                            cm_refs.add(ef["configMapRef"]["name"])
+                    argv += [str(x) for x in (c.get("command") or [])]
+                    argv += [str(x) for x in (c.get("args") or [])]
+                for vol in (tmpl.get("volumes") or []):
+                    if (vol.get("configMap") or {}).get("name"):
+                        cm_refs.add(vol["configMap"]["name"])
                 workloads.append(Workload(
                     ns=meta.get("namespace", "default"),
                     name=meta["name"],
@@ -155,6 +173,8 @@ class Inventory:
                     service_account=tmpl.get("serviceAccountName") or "default",
                     env=env,
                     host_network=bool(tmpl.get("hostNetwork")),
+                    configmap_refs=cm_refs,
+                    argv=" ".join(argv),
                 ))
         services = []
         for s in raw.get("services", []):
@@ -181,6 +201,12 @@ class Inventory:
         for w in workloads:
             ns_labels.setdefault(w.ns, {})
             ns_labels[w.ns].setdefault("kubernetes.io/metadata.name", w.ns)
+        cms = {}
+        for cm in raw.get("configmaps", []):
+            m = cm.get("metadata", {})
+            data = cm.get("data") or {}
+            if isinstance(data, dict):
+                cms[(m.get("namespace", "default"), m.get("name"))] = data
         return cls(
             workloads=workloads,
             services=services,
@@ -188,6 +214,7 @@ class Inventory:
             ingresses=raw.get("ingresses", []),
             rolebindings=raw.get("rolebindings", []),
             namespace_labels=ns_labels,
+            configmaps=cms,
         )
 
     # ----------------------------------------------------------------- helpers

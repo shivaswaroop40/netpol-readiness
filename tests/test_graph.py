@@ -91,4 +91,81 @@ def test_s1_evidence_redacts_credential_url():
     for e in s1:
         assert "s3cret" not in e.evidence
         assert "user:" not in e.evidence
-        assert e.evidence == "DATABASE_URL=db:5432"
+        # evidence names the surface it came from, then the parsed endpoint only
+        assert e.evidence == "env:DATABASE_URL=db:5432"
+
+
+# --- Generalisation: resolve by VALUE against the Service catalog, not by var NAME ---
+def _wl(name, ns, env=None, labels=None, cm_refs=None, argv=None):
+    d = {"metadata": {"name": name, "namespace": ns},
+         "spec": {"template": {"metadata": {"labels": labels or {"app": name}},
+                  "spec": {"containers": [{"name": "c", "env": [
+                      {"name": k, "value": v} for k, v in (env or {}).items()]}]}}}}
+    if argv:
+        d["spec"]["template"]["spec"]["containers"][0]["command"] = argv
+    if cm_refs:
+        d["spec"]["template"]["spec"]["volumes"] = [
+            {"name": "c", "configMap": {"name": n}} for n in cm_refs]
+    return d
+
+
+def _svc(name, ns, port, selector=None):
+    return {"metadata": {"name": name, "namespace": ns},
+            "spec": {"selector": selector or {"app": name}, "ports": [{"port": port}]}}
+
+
+def test_resolves_endpoint_regardless_of_variable_name():
+    """The dependency is real even when the variable name follows no convention —
+    this is the Sock Shop `mongo=user-db:27017` case the name-pattern approach missed."""
+    from npready import Inventory
+    snap = {"deployments": [_wl("user", "s", {"mongo": "user-db:27017"}), _wl("user-db", "s")],
+            "services": [_svc("user-db", "s", 27017)]}
+    edges = derive_needed(Inventory.from_dict(snap))
+    hit = [e for e in edges if e.dst == "s/user-db"]
+    assert hit, "value-based resolution must find the dependency"
+    assert hit[0].port == 27017
+    assert hit[0].confidence < 1.0        # resolved by value only -> lower confidence
+
+
+def test_conventional_name_raises_confidence():
+    from npready import Inventory
+    snap = {"deployments": [_wl("app", "s", {"DB_HOST": "db:5432"}), _wl("db", "s")],
+            "services": [_svc("db", "s", 5432)]}
+    e = [x for x in derive_needed(Inventory.from_dict(snap)) if x.dst == "s/db"][0]
+    assert e.confidence == 1.0            # name corroborates the resolution
+
+
+def test_unresolvable_values_produce_no_edges():
+    """Scanning every value must not invent edges: only catalog hits count."""
+    from npready import Inventory
+    snap = {"deployments": [_wl("app", "s", {
+                "MYSQL_DATABASE": "socksdb", "SESSION_REDIS": "true",
+                "JAVA_OPTS": "-Xms64m -Xmx128m -XX:+UseG1GC"})],
+            "services": []}
+    edges = [e for e in derive_needed(Inventory.from_dict(snap))
+             if e.provenance == Provenance.S1_ENV_ENDPOINT]
+    assert edges == []
+
+
+def test_configmap_and_argv_are_scanned():
+    from npready import Inventory
+    snap = {"deployments": [_wl("app", "s", cm_refs=["appcfg"], argv=["--broker=queue:5672"]),
+                            _wl("cache", "s"), _wl("queue", "s")],
+            "services": [_svc("cache", "s", 6379), _svc("queue", "s", 5672)],
+            "configmaps": [{"metadata": {"name": "appcfg", "namespace": "s"},
+                            "data": {"redis": "cache:6379"}}]}
+    dsts = {e.dst for e in derive_needed(Inventory.from_dict(snap))
+            if e.provenance == Provenance.S1_ENV_ENDPOINT}
+    assert "s/cache" in dsts       # from the ConfigMap
+    assert "s/queue" in dsts       # from the command line
+
+
+def test_pod_qualified_headless_host_resolves_in_cluster():
+    """`pod-0.svc` (StatefulSet headless form) must resolve in-cluster, not to world."""
+    from npready import Inventory
+    snap = {"deployments": [_wl("arb", "s", {"PRIMARY_HOST": "db-0.db-headless:27017"})],
+            "statefulsets": [_wl("db", "s")],
+            "services": [_svc("db-headless", "s", 27017, selector={"app": "db"})]}
+    edges = [e for e in derive_needed(Inventory.from_dict(snap)) if e.src == "s/arb"]
+    assert any(e.dst == "s/db" for e in edges), "must resolve to the backing workload"
+    assert not any(e.dst == "world" for e in edges), "must NOT be classified as egress"

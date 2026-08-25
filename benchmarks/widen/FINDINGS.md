@@ -51,7 +51,7 @@ S5 (apiserver) 2/13. No crashes across all 13 apps.
    (won't break — though allow-all is separately over-permissive, which `unused` flags).
 
 ## Where the THESIS breaks — the honest limit, quantified
-**Config-derivation found real dependency edges for 9/13 apps (69%).**
+**Config-derivation found real dependency edges for 10/13 apps (76%).**
 It works for apps that *declare* their endpoints (env vars, Ingress, headless peers)
 and returns only DNS/apiserver boilerplate for 4/13: Bookinfo, Sock Shop, Podinfo, kube-prometheus-stack.
 
@@ -66,3 +66,33 @@ The two structural gaps that remain:
 materially helps ~two-thirds of diverse real apps today. Closing the rest needs static
 endpoint analysis for hardcoded service names (roadmap). Stating this bound is a
 stronger, more credible claim than pretending config-derivation is universal.
+
+## Update — generalising derivation (verify, don't guess)
+The first S1 fired only on env var **names** matching `_HOST|_URL|_ADDR|…`. That is a
+hardcoded convention, and it silently missed real dependencies: Sock Shop declares
+`mongo=user-db:27017`, a genuine edge that the pattern rejected purely because of the
+variable's name.
+
+S1 was rebuilt around the invariant that actually holds:
+
+> a dependency exists when a configuration value **resolves to a Service that exists
+> in this cluster**.
+
+Every configuration surface is now scanned (env values, referenced ConfigMaps, and the
+container command line), each token resolved against the live Service catalog by exact
+match. The naming convention survives only as a **confidence signal** (1.0 when the
+name corroborates, 0.75 when the value alone resolves). Nothing app-specific is
+hardcoded, and it self-configures per cluster.
+
+Result: Sock Shop now derives its one manifest-declared dependency, useful apps rose to
+**10/13**, and a false-positive audit across the whole corpus found **0** bogus edges
+(`MYSQL_DATABASE=socksdb`, `SESSION_REDIS=true`, `JAVA_OPTS=-Xms64m …` all correctly
+resolve to nothing). The same change fixed a misclassification: pod-qualified headless
+names (`db-0.db-headless`) resolve **in-cluster** instead of being reported as egress.
+
+**The floor is now honest.** The 3 remaining apps are not a tooling gap: Bookinfo and
+Podinfo declare *no* dependency anywhere in their manifests (Bookinfo's are entirely in
+application code), and kube-prometheus declares its targets in ServiceMonitor CRs. That
+is the genuine boundary between *config-derivable* and *code-only* dependencies — and
+it is precisely why observation remains necessary. Config-derivation cannot be pushed
+past it by better heuristics; only by static analysis of application code.
