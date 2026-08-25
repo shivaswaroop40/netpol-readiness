@@ -23,6 +23,8 @@ helm template rmq bitnami/rabbitmq --set replicaCount=3 > rabbitmq.yaml 2>/dev/n
 helm template kf bitnami/kafka > kafka.yaml 2>/dev/null; ok kafka.yaml
 helm template mg bitnami/mongodb --set architecture=replicaset > mongodb.yaml 2>/dev/null; ok mongodb.yaml
 helm template wp bitnami/wordpress > wordpress.yaml 2>/dev/null; ok wordpress.yaml
+helm template wp bitnami/wordpress --set ingress.enabled=true --set ingress.hostname=wp.local > wordpress-ingress.yaml 2>/dev/null; ok wordpress-ingress.yaml
+helm template gh bitnami/ghost --set ingress.enabled=true --set ingress.hostname=blog.local > ghost.yaml 2>/dev/null; ok ghost.yaml
 helm template kp prometheus-community/kube-prometheus-stack > kube-prometheus.yaml 2>/dev/null; ok kube-prometheus.yaml
 
 echo "== fetched apps =="

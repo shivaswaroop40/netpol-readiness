@@ -1,7 +1,6 @@
 # Wide-n stress test — where the tool (and the thesis) break
 
-Run `npready`'s config-derivation against a diverse corpus of **11 real Kubernetes
-apps**, offline (no cluster), to find where it succeeds, produces nothing, or breaks.
+Run `npready`'s config-derivation against a diverse corpus of **13 real Kubernetes apps**, offline (no cluster), to find where it succeeds, produces nothing, or breaks.
 
 ```bash
 bash benchmarks/widen/fetch.sh          # fetch 11 apps (raw manifests + helm template)
@@ -30,7 +29,7 @@ mixed stack (kube-prometheus-stack, 134 objects).
 | WordPress | 2 | 1 | 0 | 0 | 1 | enforce |
 | kube-prometheus-stack | 4 | 0 | 0 | 0 | 0 | audit |
 
-Source hit-rate (apps where the source found > 0 edges): **S1 4/11, S3 0/11, S6 1/11**,
+Source hit-rate (apps where the source found > 0 edges): **S1 6/13, S3 2/13, S6 8/13**,
 S4 (DNS) 11/11, S5 (apiserver) 2/11.
 
 ## Where the TOOL breaks — found and fixed here
@@ -43,7 +42,7 @@ today, write policy to segment it). Online Boutique is now correctly **AUDIT** w
 would-break. No crashes across all 11 apps (robustness is sound).
 
 ## Where the THESIS breaks — the honest limitation, quantified
-**Config-derivation found real dependency edges for only 5 of 11 apps (45%).** It is
+**Config-derivation found real dependency edges for 9 of 13 apps (69%).** It is
 genuinely useful for **env-based ("twelve-factor") apps** (Online Boutique, MongoDB,
 WordPress, PostgreSQL-HA) and returns only DNS/apiserver boilerplate for:
 
@@ -68,3 +67,21 @@ WordPress, PostgreSQL-HA) and returns only DNS/apiserver boilerplate for:
   sources (static analysis of hardcoded endpoints, EndpointSlice peer resolution) to
   cover the rest. State this as the external-validity limit; it is a stronger, more
   credible claim than pretending config-derivation is universal.
+
+## Update — after fixing S6 (StatefulSet peering) and adding Ingress apps
+Two follow-up fixes, both found by re-running this benchmark:
+
+- **S6 now models single-StatefulSet peering** as a self-edge `X -> X` on the cluster
+  ports (etcd/kafka/rabbitmq peer with their own replicas), instead of dropping it.
+  Hit-rate rose from **1/11 to 8/13**; useful-app rate from **45% to 69%**.
+- **Policy parsing now credits self-edges from allow-all ingress.** The bitnami charts
+  ship permissive `ingress: [{}]` policies that DO admit peering; the tool briefly
+  reported them as would-break until it counted the allow-all self-admit. All the
+  StatefulSet charts now correctly resolve to ENFORCE (they won't break — though an
+  allow-all policy is separately over-permissive, which the `unused` bucket captures).
+- **S3 (Ingress)** now exercised via WordPress+Ingress and Ghost+Ingress (2/13).
+
+Remaining honest limits (unchanged conclusion, just quantified better): still useless
+for hardcoded-endpoint apps (Sock Shop, Bookinfo) and apps with no derivable deps
+(Podinfo, kube-prometheus). The fusion story helps ~two-thirds of diverse real apps
+today; closing the rest needs static endpoint analysis for hardcoded service names.

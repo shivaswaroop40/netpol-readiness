@@ -49,9 +49,11 @@ def derive_admitted(inv: Inventory):
                 for s in srcs:
                     for p in ports:
                         for t in targets:
-                            if s.id != t.id:
-                                edges.append(Edge(s.id, t.id, p, EdgeClass.IN_CLUSTER,
-                                                  Provenance.POLICY, evidence=np["metadata"]["name"]))
+                            # keep self-edges (X->X): a policy — including an allow-all
+                            # ingress — that admits a pod from a selector matching itself
+                            # genuinely permits StatefulSet intra-cluster peering.
+                            edges.append(Edge(s.id, t.id, p, EdgeClass.IN_CLUSTER,
+                                              Provenance.POLICY, evidence=np["metadata"]["name"]))
     # de-dup on (src, dst, port)
     best = {}
     for e in edges:

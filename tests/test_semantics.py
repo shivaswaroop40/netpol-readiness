@@ -120,8 +120,8 @@ def test_dns_and_apiserver_are_out_of_scope_not_missing():
     assert all(e.dst not in ("kube-dns", "kube-apiserver") for e in res.missing)
 
 
-# --- Finding 3: S6 must not emit an unsatisfiable self-loop for a lone StatefulSet ---
-def test_s6_no_self_loop_for_single_statefulset():
+# --- S6: a lone StatefulSet's intra-cluster peering is a checkable self-edge ---
+def _etcd_snap(with_policy=False):
     snap = {
         "statefulsets": [{"metadata": {"name": "etcd", "namespace": "x"},
                           "spec": {"template": {"metadata": {"labels": {"app": "etcd"}},
@@ -130,10 +130,28 @@ def test_s6_no_self_loop_for_single_statefulset():
                       "spec": {"clusterIP": "None", "selector": {"app": "etcd"},
                                "ports": [{"port": 2380}]}}],
     }
-    edges = derive_needed(Inventory.from_dict(snap))
-    peers = [e for e in edges if e.provenance == Provenance.S6_PEER]
-    assert all(e.src != e.dst for e in peers)                # no phantom self-loop
-    assert peers == []                                        # single identity -> nothing to check
+    if with_policy:
+        snap["networkpolicies"] = [{"metadata": {"name": "etcd-peer", "namespace": "x"},
+            "spec": {"podSelector": {"matchLabels": {"app": "etcd"}}, "policyTypes": ["Ingress"],
+                     "ingress": [{"from": [{"podSelector": {"matchLabels": {"app": "etcd"}}}],
+                                  "ports": [{"port": 2380}]}]}}]
+    return snap
+
+
+def test_s6_single_statefulset_emits_self_peer_edge():
+    edges = derive_needed(Inventory.from_dict(_etcd_snap()))
+    peers = [(e.src, e.dst, e.port) for e in edges if e.provenance == Provenance.S6_PEER]
+    assert ("x/etcd", "x/etcd", 2380) in peers            # intra-cluster peering IS emitted
+
+
+def test_s6_peer_edge_satisfied_by_intra_app_policy():
+    inv = Inventory.from_dict(_etcd_snap(with_policy=True))
+    needed = derive_needed(inv)
+    admitted, protected = derive_admitted(inv)
+    res = reconcile(needed, admitted, total_workloads=1, protected=protected)
+    correct = {(e.src, e.dst, e.port) for e in res.correct}
+    assert ("x/etcd", "x/etcd", 2380) in correct          # the peering policy satisfies it
+    assert not res.missing
 
 
 # --- Finding 1 (FALSE-SAFE): a port-unknown need must NOT be cleared by a wrong-port admit ---

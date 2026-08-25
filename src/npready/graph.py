@@ -160,11 +160,13 @@ def s6_peers(inv: Inventory) -> list:
     etcd, postgres replicas, NATS). These intra-set edges are invisible to an
     ingress-only observer that only sees client traffic.
 
-    We emit edges only between DISTINCT workload identities behind the same headless
-    Service. Peering *within* a single StatefulSet (pod-0 <-> pod-1) collapses to a
-    self-loop at workload-identity granularity and cannot be checked against an
-    identity-keyed policy, so we do not emit a phantom self-edge that could never be
-    admitted; that case is a documented limitation, not a missing dependency."""
+    A StatefulSet's pods peer with each other (etcd, kafka, rabbitmq, postgres
+    replicas). At workload-identity granularity that intra-set peering is a SELF-edge
+    ``X -> X`` on the cluster port — which a NetworkPolicy expresses as "podSelector X,
+    ingress from podSelector X". So for a StatefulSet behind a headless Service we emit
+    that self-edge (it is real and checkable), and for multiple distinct workloads
+    behind one headless Service we emit the cross edges too. A *non*-StatefulSet
+    self-loop is not a clustering relationship and is skipped."""
     edges = []
     for svc in inv.services:
         if svc.kind != "Headless":
@@ -173,8 +175,8 @@ def s6_peers(inv: Inventory) -> list:
         ports = [p for p, _ in svc.ports] or [None]
         for a in peers:
             for b in peers:
-                if a.id == b.id:                       # same identity: not checkable here
-                    continue
+                if a.id == b.id and a.kind != "statefulset":
+                    continue                           # only StatefulSets peer with own replicas
                 for port in ports:
                     edges.append(Edge(a.id, b.id, port, EdgeClass.PEER,
                                       Provenance.S6_PEER, evidence=f"headless/{svc.name}"))
