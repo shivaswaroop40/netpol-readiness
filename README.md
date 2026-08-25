@@ -90,11 +90,16 @@ npready derive --manifests ./deploy/ --json needed.json
 ### 3. Validate that my policies actually block attacks
 
 ```bash
+# the attack chart ships in this repo (at attacks/); clone/checkout to use it.
 # edit attacks/values.yaml to point families at your real targets, then:
 helm install npready-attacks ./attacks -n npready-attacks --create-namespace
 kubectl -n npready-attacks logs -l app.kubernetes.io/name=npready-attacks | grep RESULT
 # RESULT 03-lateral-movement postgres.shop.svc:5432 BLOCKED  <- policy working
 ```
+
+> The chart is distributed with the source repository (not yet inside the pip
+> package — see `docs/ROADMAP.md`). `npready attacks` prints the correct chart path
+> for your checkout.
 
 ### 4. Score a generated policy on the safe-to-enforce axis
 

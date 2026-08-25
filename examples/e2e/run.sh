@@ -31,6 +31,7 @@ echo "   client->cache OPEN (correct)"
 echo "== 5. attack probe (compromised identity) must be BLOCKED reaching cache =="
 helm install npready-attacks "$ROOT/attacks" -n "$NS" \
   --set namespace.create=false \
+  --set namespace.name=npready-demo \
   --set 'families[0].id=03-lateral-movement' \
   --set 'families[0].enabled=true' \
   --set 'families[0].kind=tcp' \

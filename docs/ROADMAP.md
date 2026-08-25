@@ -21,6 +21,11 @@ apps; apps that hard-code service names (e.g. Sock Shop) need fallbacks:
   result: fusion beats either source alone).
 
 ### Package completeness — ~2 weeks
+- **Ship the attack Helm chart inside the pip package.** Today the chart lives at
+  `attacks/` in the source repo, so it's available to a git checkout / editable
+  install but not to a plain `pip install` wheel. Relocate it under `src/npready/`
+  and resolve it via `importlib.resources`, with an `npready attacks --emit DIR` to
+  extract it, so PyPI users can deploy the probes too.
 - In-cluster **results collector** for the attack chart: a small Job that scrapes all
   `RESULT ... OPEN|BLOCKED` lines and emits a single structured report + JUnit XML.
 - Gateway API (`HTTPRoute`) and `ExternalName` egress edge classes.

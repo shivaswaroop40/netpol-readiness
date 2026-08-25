@@ -134,3 +134,89 @@ def test_s6_no_self_loop_for_single_statefulset():
     peers = [e for e in edges if e.provenance == Provenance.S6_PEER]
     assert all(e.src != e.dst for e in peers)                # no phantom self-loop
     assert peers == []                                        # single identity -> nothing to check
+
+
+# --- Finding 1 (FALSE-SAFE): a port-unknown need must NOT be cleared by a wrong-port admit ---
+def test_port_unknown_need_not_satisfied_by_wrong_port_admit():
+    from npready.model import Edge, EdgeClass, Provenance
+    need = [Edge("a", "b", None, EdgeClass.IN_CLUSTER, Provenance.S1_ENV_ENDPOINT)]  # port unknown
+    admit = [Edge("a", "b", 443, EdgeClass.IN_CLUSTER, Provenance.POLICY)]           # specific port
+    res = reconcile(need, admit, total_workloads=2, protected={"b"})
+    # conservative: unknown-port need is NOT satisfied by a single wrong-port admit
+    assert {(e.src, e.dst, e.port) for e in res.missing} == {("a", "b", None)}
+    assert not res.correct
+
+
+def test_port_unknown_need_satisfied_by_all_ports_admit():
+    from npready.model import Edge, EdgeClass, Provenance
+    need = [Edge("a", "b", None, EdgeClass.IN_CLUSTER, Provenance.S1_ENV_ENDPOINT)]
+    admit = [Edge("a", "b", None, EdgeClass.IN_CLUSTER, Provenance.POLICY)]  # all ports
+    res = reconcile(need, admit, total_workloads=2, protected={"b"})
+    assert {(e.src, e.dst, e.port) for e in res.correct} == {("a", "b", None)}
+    assert not res.missing
+
+
+def test_score_port_unknown_legit_conservative_but_attack_optimistic():
+    from npready import score
+    # legit need on unknown port is DENIED by a wrong-port admit (conservative false-deny)
+    r = score([("a", "b", 443)], [("a", "b", None)], [("x", "y", 22)])
+    assert r["false_deny"] == 1.0
+    # attack on unknown port IS flagged admitted by any-port admit (optimistic over-priv)
+    r2 = score([("x", "y", 443)], [("a", "b", 80)], [("x", "y", None)])
+    assert r2["over_privilege"] == 1.0
+
+
+# --- additive union: two policies on the same pod, allow-all wins (k8s union semantics) ---
+def test_networkpolicies_are_additive():
+    snap = {"deployments": [_deploy("db", "shop", {"app": "db"}),
+                            _deploy("cli", "shop", {"app": "cli"})],
+            "networkpolicies": [
+                {"metadata": {"name": "p1", "namespace": "shop"},
+                 "spec": {"podSelector": {"matchLabels": {"app": "db"}}, "policyTypes": ["Ingress"],
+                          "ingress": [{"from": [{"podSelector": {"matchLabels": {"app": "cli"}}}],
+                                       "ports": [{"port": 5432}]}]}},
+                {"metadata": {"name": "p2-allow-all", "namespace": "shop"},
+                 "spec": {"podSelector": {"matchLabels": {"app": "db"}}, "policyTypes": ["Ingress"],
+                          "ingress": [{}]}}]}   # empty rule = allow all sources, all ports
+    admitted, _ = derive_admitted(Inventory.from_dict(snap))
+    keys = {(e.src, e.dst, e.port) for e in admitted}
+    assert ("shop/cli", "shop/db", 5432) in keys       # from p1
+    assert ("shop/cli", "shop/db", None) in keys        # from p2 all-ports (union wins)
+
+
+# --- ipBlock peer admits no workload identity ---
+def test_ipblock_from_admits_no_workload_edge():
+    snap = {"deployments": [_deploy("db", "shop", {"app": "db"})],
+            "networkpolicies": [{"metadata": {"name": "ipb", "namespace": "shop"},
+                "spec": {"podSelector": {"matchLabels": {"app": "db"}}, "policyTypes": ["Ingress"],
+                         "ingress": [{"from": [{"ipBlock": {"cidr": "10.0.0.0/8"}}],
+                                      "ports": [{"port": 5432}]}]}}]}
+    admitted, protected = derive_admitted(Inventory.from_dict(snap))
+    assert admitted == []                               # no workload identity from an ipBlock
+    assert "shop/db" in protected                        # but the pod is still protected
+
+
+# --- matchExpressions label selector (In/NotIn/Exists) ---
+def test_matchexpressions_selector():
+    from npready.inventory import labels_match
+    labels = {"tier": "data", "app": "db"}
+    assert labels_match({"matchExpressions": [{"key": "tier", "operator": "In", "values": ["data", "cache"]}]}, labels)
+    assert not labels_match({"matchExpressions": [{"key": "tier", "operator": "NotIn", "values": ["data"]}]}, labels)
+    assert labels_match({"matchExpressions": [{"key": "app", "operator": "Exists"}]}, labels)
+    assert not labels_match({"matchExpressions": [{"key": "missing", "operator": "Exists"}]}, labels)
+
+
+# --- egress: ExternalName service -> world; external FQDN env -> world egress ---
+def test_externalname_and_external_fqdn_are_egress():
+    from npready.model import EdgeClass
+    snap = {"deployments": [_deploy("app", "x", {"app": "app"})],
+            "services": [{"metadata": {"name": "ext", "namespace": "x"},
+                          "spec": {"type": "ExternalName", "externalName": "api.stripe.com"}}]}
+    snap["deployments"][0]["spec"]["template"]["spec"]["containers"][0]["env"] = [
+        {"name": "PAY_URL", "value": "http://ext:443"},
+        {"name": "WEBHOOK_URL", "value": "https://hooks.example.com/x"}]
+    edges = derive_needed(Inventory.from_dict(snap))
+    egress = [e for e in edges if e.edge_class == EdgeClass.EGRESS]
+    dsts = {e.dst for e in egress}
+    assert dsts == {"world"}                             # both resolve to the world token
+    assert len(egress) == 2

@@ -26,14 +26,19 @@ def test_reconcile_quadrants(mini_inventory):
     correct = _keys(res.correct)
     missing = _keys(res.missing)
     unused = _keys(res.unused)
+    oos = _keys(res.out_of_scope)
 
     # CORRECT: the one declared edge the loose policy happens to admit
     assert ("shop/orders-api", "shop/orders-db", 5432) in correct
 
-    # MISSING (would break on enforce): declared but unadmitted
+    # MISSING (would break on enforce): declared in-cluster edge, unadmitted
     assert ("shop/storefront", "shop/orders-api", 8080) in missing
     assert ("shop/orders-api", "shop/orders-cache", 6379) in missing
-    assert ("ingress-controller", "shop/storefront", 80) in missing
+
+    # ENTRY edge is OUT OF SCOPE (synthetic ingress-controller src can't be matched),
+    # NOT counted as would-break — it must never be in missing.
+    assert ("ingress-controller", "shop/storefront", 80) in oos
+    assert ("ingress-controller", "shop/storefront", 80) not in missing
 
     # UNUSED (over-privilege): admitted but not needed
     assert ("shop/storefront", "shop/orders-db", 5432) in unused

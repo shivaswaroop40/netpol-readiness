@@ -10,8 +10,8 @@ type: application
 version: 0.1.0
 appVersion: "0.1.0"
 keywords: [security, networkpolicy, microsegmentation, attack-simulation, mitre-attack]
-home: https://github.com/REPLACE_ME/netpol-readiness
-sources: [https://github.com/REPLACE_ME/netpol-readiness]
+home: https://github.com/shivaswaroop40/netpol-readiness
+sources: [https://github.com/shivaswaroop40/netpol-readiness]
 maintainers:
   - name: Shivaswaroop Nittoor Krishnamurthy
 annotations:

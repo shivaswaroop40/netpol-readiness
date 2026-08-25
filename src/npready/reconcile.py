@@ -22,12 +22,21 @@ SYNTHETIC_DSTS = {"kube-dns", "kube-apiserver", "world", "node"}
 
 
 def _in_scope(edge: Edge) -> bool:
-    """True if this needed edge is checkable against an ingress NetworkPolicy: it
-    reaches a real in-cluster workload. Egress, excluded (hostNetwork), and
-    synthetic infra destinations are out of scope for ingress reconciliation."""
+    """True if this needed edge is checkable against an ingress NetworkPolicy: a
+    real in-cluster-workload source reaching a real in-cluster-workload destination.
+
+    Out of scope (reported separately, never counted as 'would break'):
+      * synthetic infra destinations (kube-dns, kube-apiserver, world, node)
+      * egress / hostNetwork-excluded edges (need egress policy / not expressible)
+      * ENTRY edges (external -> pod via Ingress/Gateway). Their source is the
+        synthetic token "ingress-controller", which never equals a real workload id,
+        so we cannot yet match them against admitted edges without resolving the
+        ingress controller's actual identity. Reporting them as 'missing' would be a
+        false SHADOW on every cluster that has an Ingress; resolving the controller
+        identity is roadmap (see docs/ROADMAP.md)."""
     if edge.dst in SYNTHETIC_DSTS:
         return False
-    return edge.edge_class in (EdgeClass.IN_CLUSTER, EdgeClass.ENTRY, EdgeClass.PEER)
+    return edge.edge_class in (EdgeClass.IN_CLUSTER, EdgeClass.PEER)
 
 
 def reconcile(needed, admitted, total_workloads=0, protected=None) -> ReconcileResult:
@@ -49,12 +58,13 @@ def reconcile(needed, admitted, total_workloads=0, protected=None) -> ReconcileR
     for e in needed:
         if not _in_scope(e):
             out_of_scope.append(e)
-        elif admits(e.key(), adm_keys):
-            correct.append(e)
+        elif admits(e.key(), adm_keys, target_is_need=True):   # conservative: a port-unknown
+            correct.append(e)                                   # need needs an all-ports admit
         else:
             missing.append(e)
 
-    # unused = admitted edges that satisfy no need (wildcard-aware in both directions)
+    # unused = admitted edges that satisfy no need. Optimistic here on purpose: do NOT
+    # over-flag an admit as removable when a port-unknown need on the pair might use it.
     unused = [e for e in admitted if not admits(e.key(), need_keys)]
 
     return ReconcileResult(

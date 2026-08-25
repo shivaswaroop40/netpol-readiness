@@ -115,11 +115,33 @@ def cmd_score(args):
 
 
 # ------------------------------------------------------------------ attacks
+def _find_chart() -> str:
+    """Locate the attack Helm chart. It ships in the source repository (at
+    ``attacks/``), so it's available for a git checkout / editable install but NOT
+    inside a plain ``pip install`` wheel — see docs/ROADMAP.md. Return a real path if
+    found, else "" so the caller prints an accurate instruction."""
+    import os
+    here = os.path.dirname(os.path.abspath(__file__))
+    for cand in (os.path.join(here, "..", "..", "attacks"),   # editable install / repo
+                 os.path.join(os.getcwd(), "attacks")):        # run from repo root
+        chart = os.path.normpath(cand)
+        if os.path.exists(os.path.join(chart, "Chart.yaml")):
+            return chart
+    return ""
+
+
 def cmd_attacks(args):
     from .attacks import OWASP_K8S, ROSTER
     print("ATT&CK-mapped network-reachability attack roster")
     print(f"addresses OWASP K8s: {OWASP_K8S['2025']} (2022: {OWASP_K8S['2022'].split(' ',1)[0]})")
-    print("deploy with:  helm install npready-attacks ./attacks -n npready-attacks --create-namespace\n")
+    chart = _find_chart()
+    if chart:
+        print(f"deploy with:  helm install npready-attacks {chart} "
+              f"-n npready-attacks --create-namespace\n")
+    else:
+        print("the attack chart ships in the source repository (not the pip package);\n"
+              "  clone https://github.com/shivaswaroop40/netpol-readiness and:\n"
+              "  helm install npready-attacks ./attacks -n npready-attacks --create-namespace\n")
     print(f"{'family':22} {'edge class':11} {'technique':13} {'mitigation':11} target")
     print("-" * 88)
     for f in ROSTER:

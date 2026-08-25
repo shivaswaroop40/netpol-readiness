@@ -41,17 +41,28 @@ def _keyset(edges: Iterable) -> set:
     return {_as_key(e) for e in edges}
 
 
-def admits(target: Key, admit: set) -> bool:
-    """Does the admit-set permit ``target``? A wildcard (port=None) admit edge on
-    the same pair permits any port; an exact match permits that port. Shared by the
-    scorer and the reconciler so both treat a no-ports policy rule identically."""
+def admits(target: Key, admit: set, *, target_is_need: bool = False) -> bool:
+    """Does the admit-set permit ``target``?
+
+    An admit edge with ``port=None`` (a policy rule with no ``ports``) permits any
+    port on the pair; an exact ``(s,d,p)`` match permits that port.
+
+    The tricky case is a *target* whose port is unknown (``None``). Direction matters:
+      * for an ATTACK (default), be pessimistic about security — treat the attack as
+        admitted if ANY port on the pair is admitted (``target_is_need=False``);
+      * for a NEED (``target_is_need=True``), be pessimistic about breakage — a
+        port-unknown dependency is only satisfied by an ALL-PORTS admit, never by a
+        single wrong-port admit. Otherwise a need for ``a->b:?`` would be wrongly
+        cleared by a policy that only admits ``a->b:443``, flipping SHADOW->ENFORCE
+        on traffic that would actually be denied (a false "safe to enforce").
+    """
     s, d, p = target
     if (s, d, p) in admit:
         return True
-    if (s, d, None) in admit:           # admit-side wildcard covers any port
+    if (s, d, None) in admit:           # policy admits all ports on the pair
         return True
-    if p is None:                       # target is port-blind: any admit on the pair
-        return any(a[0] == s and a[1] == d for a in admit)
+    if p is None and not target_is_need:
+        return any(a[0] == s and a[1] == d for a in admit)   # optimistic (attacks only)
     return False
 
 
@@ -70,8 +81,8 @@ def score(admitted: Iterable, L: Iterable, A: Iterable,
     Lk = _keyset(L)
     Ak = _keyset(A)
 
-    admitted_attacks = [a for a in Ak if _admits(a, admit)]
-    missed_legit = [x for x in Lk if not _admits(x, admit)]
+    admitted_attacks = [a for a in Ak if _admits(a, admit)]                       # attack: optimistic
+    missed_legit = [x for x in Lk if not _admits(x, admit, target_is_need=True)]  # need: conservative
 
     over_priv = len(admitted_attacks) / len(Ak) if Ak else 0.0
     false_deny = len(missed_legit) / len(Lk) if Lk else 0.0
@@ -86,7 +97,7 @@ def score(admitted: Iterable, L: Iterable, A: Iterable,
     }
     if L_inscope is not None:
         Lin = _keyset(L_inscope)
-        missed_in = [x for x in Lin if not _admits(x, admit)]
+        missed_in = [x for x in Lin if not _admits(x, admit, target_is_need=True)]
         out["false_deny_inscope"] = round(len(missed_in) / len(Lin), 6) if Lin else 0.0
     return out
 
@@ -105,9 +116,9 @@ def decompose_false_deny(admitted: Iterable, L: Iterable, observed: Iterable) ->
     Lk = _keyset(L)
     Ok = _keyset(observed)
 
-    denied = [x for x in Lk if not _admits(x, admit)]
-    never_observed = [x for x in denied if not _admits(x, Ok)]
-    observed_but_denied = [x for x in denied if _admits(x, Ok)]
+    denied = [x for x in Lk if not _admits(x, admit, target_is_need=True)]
+    never_observed = [x for x in denied if not _admits(x, Ok, target_is_need=True)]
+    observed_but_denied = [x for x in denied if _admits(x, Ok, target_is_need=True)]
 
     n = len(Lk) or 1
     return {
