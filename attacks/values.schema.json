@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "npready-attacks values",
+  "type": "object",
+  "properties": {
+    "probe": {
+      "type": "object",
+      "properties": {
+        "timeoutSeconds": { "type": "integer", "minimum": 1, "maximum": 60 },
+        "activeDeadlineSeconds": { "type": "integer", "minimum": 1, "maximum": 600 },
+        "ttlSecondsAfterFinished": { "type": "integer", "minimum": 0 },
+        "backoffLimit": { "type": "integer", "minimum": 0, "maximum": 3 }
+      }
+    },
+    "families": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "kind"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$" },
+          "enabled": { "type": "boolean" },
+          "kind": { "type": "string", "enum": ["tcp", "http"] },
+          "technique": { "type": "string", "pattern": "^[A-Za-z0-9.+/ -]{0,40}$" },
+          "edgeClass": { "type": "string", "enum": ["in_cluster", "entry", "peer", "egress", "excluded"] },
+          "expect": { "type": "string", "enum": ["blocked", "open", "mixed"] },
+          "targets": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "host": {
+                  "comment": "DNS name or IPv4; no leading dash, no shell metacharacters",
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$"
+                },
+                "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+                "url": {
+                  "type": "string",
+                  "pattern": "^https?://[A-Za-z0-9._~:/?#@!$&'()*+,;=%.-]+$"
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      }
+    }
+  }
+}

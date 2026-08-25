@@ -1,0 +1,58 @@
+{{- $root := . -}}
+{{- range .Values.families }}
+{{- if .enabled }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: probe-{{ .id }}
+  namespace: {{ $root.Values.namespace.name }}
+  labels:
+    {{- include "npready.labels" $root | nindent 4 }}
+    npready.dev/family: {{ .id | quote }}
+    npready.dev/technique: {{ .technique | quote }}
+    npready.dev/edge-class: {{ .edgeClass | quote }}
+spec:
+  backoffLimit: {{ $root.Values.probe.backoffLimit }}
+  activeDeadlineSeconds: {{ $root.Values.probe.activeDeadlineSeconds }}
+  ttlSecondsAfterFinished: {{ $root.Values.probe.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        {{- include "npready.labels" $root | nindent 8 }}
+        npready.dev/family: {{ .id | quote }}
+        {{- with $root.Values.compromisedIdentity.labels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      restartPolicy: Never
+      {{- with $root.Values.compromisedIdentity.serviceAccountName }}
+      serviceAccountName: {{ . }}
+      {{- end }}
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: probe
+          image: {{ $root.Values.probe.image }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          # Inputs arrive as env vars (literal strings, never shell-parsed), so a
+          # hostile values.yaml cannot inject commands into the probe script.
+          env:
+            - { name: FAM_ID, value: {{ .id | quote }} }
+            - { name: FAM_TECH, value: {{ .technique | quote }} }
+            - { name: FAM_EXPECT, value: {{ .expect | quote }} }
+            - { name: FAM_KIND, value: {{ .kind | quote }} }
+            - { name: TIMEOUT, value: {{ $root.Values.probe.timeoutSeconds | quote }} }
+            - { name: TARGETS, value: {{ include "npready.targets" (dict "fam" .) | quote }} }
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+{{ include "npready.probeScript" . | indent 16 }}
+{{- end }}
+{{- end }}

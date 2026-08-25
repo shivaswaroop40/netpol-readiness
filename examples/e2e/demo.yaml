@@ -1,0 +1,48 @@
+# A tiny REAL workload set for end-to-end validation (unlike the analysis fixture,
+# these have live listeners so the attack probes get true OPEN/BLOCKED results).
+#
+#   client  --needs--> cache(redis:6379)      (declared via REDIS_ADDR)
+#   a default-deny policy + one allow rule (client -> cache) should:
+#     * keep client -> cache OPEN   (legitimate, admitted)
+#     * make  probe  -> cache BLOCKED (compromised identity, not admitted)
+---
+apiVersion: v1
+kind: Namespace
+metadata: { name: npready-demo, labels: { npready.dev/demo: "true" } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: cache, namespace: npready-demo }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: cache } }
+  template:
+    metadata: { labels: { app: cache, tier: data } }
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports: [{ containerPort: 6379 }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: cache, namespace: npready-demo }
+spec:
+  selector: { app: cache }
+  ports: [{ port: 6379, targetPort: 6379 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: client, namespace: npready-demo }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: client } }
+  template:
+    metadata: { labels: { app: client, tier: app } }
+    spec:
+      containers:
+        - name: app
+          image: redis:7-alpine
+          command: ["sh", "-c", "while true; do redis-cli -h $REDIS_ADDR ping; sleep 5; done"]
+          env:
+            - { name: REDIS_ADDR, value: "cache" }

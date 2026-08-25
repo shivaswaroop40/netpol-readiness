@@ -1,0 +1,23 @@
+# Default-deny for the demo namespace, plus exactly the one edge the config declares.
+# After applying this, the attack probe (compromised identity) must be BLOCKED
+# reaching cache, while the legitimate client is still allowed.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: default-deny-ingress, namespace: npready-demo }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+# (no ingress rules = deny all ingress)
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-client-to-cache, namespace: npready-demo }
+spec:
+  podSelector: { matchLabels: { app: cache } }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { app: client } }
+      ports:
+        - { protocol: TCP, port: 6379 }

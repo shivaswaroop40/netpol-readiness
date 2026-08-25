@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "If you use npready in academic work, please cite it as below."
+title: "npready: enforcement-readiness analysis for Kubernetes NetworkPolicies"
+abstract: >-
+  A tool and evaluation framework that measures whether a generated Kubernetes
+  NetworkPolicy is safe to enforce: it derives the dependency edges a workload
+  declares it needs (from env vars, Ingress, RBAC, DNS, headless peers), reconciles
+  them against what the policies admit to surface the "would break on enforce" set,
+  scores generators on over-privilege and false-deny, and ships an ATT&CK-mapped,
+  declaratively-deployable attack roster to validate what a policy blocks.
+type: software
+authors:
+  - family-names: "Nittoor Krishnamurthy"
+    given-names: "Shivaswaroop"
+    # affiliation and orcid: fill in before release if desired
+    affiliation: "KTH Royal Institute of Technology"
+version: "0.1.0"
+license: Apache-2.0
+keywords:
+  - kubernetes
+  - networkpolicy
+  - microsegmentation
+  - enforcement-readiness
+  - security
+repository-code: "https://github.com/REPLACE_ME/netpol-readiness"

@@ -1,0 +1,135 @@
+# Synthetic cluster that exercises every derivation source and all four quadrants.
+# Dependencies are DECLARED in env vars / ingress / rbac; one loose policy creates
+# over-privilege; several declared edges are unadmitted (would break on enforce).
+#
+# Expected (port-aware) reconciliation, verified by the tests:
+#   NEEDED (S1): storefront->orders-api:8080, orders-api->orders-db:5432,
+#               orders-api->orders-cache:6379
+#   NEEDED (S3): ingress-controller->storefront:80
+#   NEEDED (S4): every workload -> kube-dns:53
+#   NEEDED (S5): reporting -> kube-apiserver:443   (its SA is bound)
+#   ADMITTED   : whole namespace -> orders-db:5432 (the loose policy)
+#   => correct : orders-api->orders-db:5432
+#      missing : storefront->orders-api:8080, orders-api->orders-cache:6379,
+#                ingress->storefront:80, reporting->apiserver:443, dns edges ...
+#      unused  : storefront->orders-db:5432, orders-cache->orders-db:5432,
+#                reporting->orders-db:5432
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: storefront, namespace: shop }
+spec:
+  selector: { matchLabels: { app: storefront } }
+  template:
+    metadata: { labels: { app: storefront, tier: front } }
+    spec:
+      containers:
+        - name: app
+          image: pause
+          env:
+            - { name: ORDERS_API_URL, value: "http://orders-api:8080" }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: storefront, namespace: shop }
+spec:
+  selector: { app: storefront }
+  ports: [{ port: 80, targetPort: 80 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: orders-api, namespace: shop }
+spec:
+  selector: { matchLabels: { app: orders-api } }
+  template:
+    metadata: { labels: { app: orders-api, tier: mid } }
+    spec:
+      containers:
+        - name: app
+          image: pause
+          env:
+            - { name: POSTGRES_HOST, value: "orders-db:5432" }
+            - { name: REDIS_ADDR, value: "orders-cache:6379" }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: orders-api, namespace: shop }
+spec:
+  selector: { app: orders-api }
+  ports: [{ port: 8080, targetPort: 8080 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: orders-db, namespace: shop }
+spec:
+  selector: { matchLabels: { app: orders-db } }
+  template:
+    metadata: { labels: { app: orders-db, tier: data } }
+    spec:
+      containers: [{ name: db, image: pause }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: orders-db, namespace: shop }
+spec:
+  selector: { app: orders-db }
+  ports: [{ port: 5432, targetPort: 5432 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: orders-cache, namespace: shop }
+spec:
+  selector: { matchLabels: { app: orders-cache } }
+  template:
+    metadata: { labels: { app: orders-cache, tier: data } }
+    spec:
+      containers: [{ name: cache, image: pause }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: orders-cache, namespace: shop }
+spec:
+  selector: { app: orders-cache }
+  ports: [{ port: 6379, targetPort: 6379 }]
+---
+# reporting: bound to a Role (S5 -> apiserver), admitted to the db by the loose
+# policy but declares NO dependency on it (over-privilege)
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: reporting, namespace: shop }
+spec:
+  selector: { matchLabels: { app: reporting } }
+  template:
+    metadata: { labels: { app: reporting, tier: batch } }
+    spec:
+      serviceAccountName: reporting-sa
+      containers: [{ name: app, image: pause }]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: reporting-rb, namespace: shop }
+subjects:
+  - { kind: ServiceAccount, name: reporting-sa, namespace: shop }
+roleRef: { kind: Role, name: reporting-role, apiGroup: rbac.authorization.k8s.io }
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata: { name: shop-ingress, namespace: shop }
+spec:
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: storefront, port: { number: 80 } } }
+---
+# THE LOOSE POLICY: whole namespace may reach the db on 5432
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: orders-db-allow-namespace, namespace: shop }
+spec:
+  podSelector: { matchLabels: { app: orders-db } }
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ podSelector: {} }]
+      ports: [{ protocol: TCP, port: 5432 }]

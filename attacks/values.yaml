@@ -1,0 +1,108 @@
+# npready-attacks — configuration.
+#
+# SAFETY MODEL (read before deploying):
+#   * Everything lands in a disposable, clearly-labelled namespace (default
+#     "npready-attacks"), never your app namespace.
+#   * Probes CONNECT and REPORT. They do not exploit, persist, exfiltrate, or write.
+#   * Every Job is fail-closed: short timeout, restartPolicy Never,
+#     activeDeadlineSeconds, and ttlSecondsAfterFinished for auto-cleanup.
+#   * Run only against clusters you are authorised to test.
+
+namespace:
+  # The disposable namespace the probes run in. Created by the chart.
+  name: npready-attacks
+  create: true
+  labels:
+    npready.dev/purpose: attack-validation
+    npready.dev/disposable: "true"
+
+# The identity a probe pod carries. The compromised-workload model: a probe wears a
+# legitimate workload's labels so policies that key on those labels are exercised
+# realistically. Override to match a real workload in the cluster under test.
+compromisedIdentity:
+  labels:
+    app: compromised-workload
+  serviceAccountName: ""          # "" -> the namespace default SA (no extra RBAC)
+
+probe:
+  # Small image with nc + wget. Pin by digest in real use.
+  image: busybox:1.36
+  timeoutSeconds: 4               # per-connection timeout (fail-closed)
+  activeDeadlineSeconds: 60       # hard cap on a Job's lifetime
+  ttlSecondsAfterFinished: 600    # auto-delete finished Jobs
+  backoffLimit: 0                 # never retry a probe
+
+# Attack families. Enable only what is relevant to the cluster under test, and set
+# each target to a real destination. `expect` is what a CORRECT policy should do
+# (BLOCKED); the Job logs the actual result so you can diff.
+families:
+  - id: "06-internal-recon"
+    enabled: true
+    technique: T1046
+    edgeClass: in_cluster
+    kind: tcp
+    targets:                       # host:port list to sweep
+      - host: kubernetes.default.svc
+        port: 443
+    expect: mixed                  # apiserver is legitimately reachable; recon is the sweep
+
+  - id: "05-unauthorized-api"
+    enabled: false
+    technique: T1552.007
+    edgeClass: in_cluster
+    kind: tcp
+    targets:
+      - host: REPLACE-internal-api.your-ns.svc
+        port: 8000
+    expect: blocked
+
+  - id: "02-messagebus-abuse"
+    enabled: false
+    technique: T1046
+    edgeClass: in_cluster
+    kind: tcp
+    targets:
+      - host: REPLACE-nats.your-ns.svc
+        port: 4222
+    expect: blocked
+
+  - id: "03-lateral-movement"
+    enabled: false
+    technique: T1046+T1552
+    edgeClass: in_cluster
+    kind: tcp
+    targets:
+      - host: REPLACE-postgres.your-ns.svc
+        port: 5432
+      - host: REPLACE-vault.your-ns.svc
+        port: 8200
+    expect: blocked
+
+  - id: "04-metadata-egress"
+    enabled: false
+    technique: T1552.005
+    edgeClass: egress
+    kind: http
+    targets:
+      - url: http://169.254.169.254/latest/meta-data/
+    expect: blocked
+
+  - id: "07-egress-exfil"
+    enabled: false
+    technique: T1048
+    edgeClass: egress
+    kind: http
+    targets:
+      - url: https://example.com/          # stand-in for an attacker-controlled host
+    expect: blocked
+
+  - id: "01-kubelet-rce"
+    enabled: false
+    technique: T1609
+    edgeClass: in_cluster
+    kind: tcp
+    # Node IPs are cluster-specific; fill in from `kubectl get nodes -o wide`.
+    targets:
+      - host: REPLACE-node-internal-ip
+        port: 10250
+    expect: blocked

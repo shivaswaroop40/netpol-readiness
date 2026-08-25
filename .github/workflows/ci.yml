@@ -1,0 +1,64 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Lint
+        run: ruff check src tests
+      - name: Test
+        run: pytest --cov=npready --cov-report=term-missing
+
+  helm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - name: Lint chart
+        run: helm lint ./attacks
+      - name: Render chart
+        run: helm template npready-attacks ./attacks > /dev/null
+      - name: Schema rejects malformed target (security regression)
+        run: |
+          if helm template x ./attacks \
+               --set 'families[0].enabled=true' \
+               --set 'families[0].targets[0].host=evil;id' \
+               --set 'families[0].targets[0].port=443' > /dev/null 2>&1; then
+            echo "values.schema.json did NOT reject a malformed host — failing"; exit 1
+          else
+            echo "malformed host correctly rejected by values.schema.json"
+          fi
+
+  e2e-kind:
+    # Readiness conformance: deploy a fixture, apply a policy, confirm the attack
+    # roster reports the expected BLOCKED/OPEN matrix. Distinct from CNI conformance.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: helm/kind-action@v1
+        with:
+          # kind's default CNI (kindnet) enforces NetworkPolicy from recent versions;
+          # Calico is installed in the e2e script for full egress coverage.
+          cluster_name: npready-e2e
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13" }
+      - name: Install npready
+        run: pip install -e .
+      - name: Run end-to-end
+        run: bash examples/e2e/run.sh

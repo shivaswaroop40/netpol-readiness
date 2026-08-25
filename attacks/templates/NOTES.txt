@@ -1,0 +1,25 @@
+npready-attacks deployed to namespace: {{ .Values.namespace.name }}
+
+Enabled probe families:
+{{- range .Values.families }}
+{{- if .enabled }}
+  - {{ .id }}  ({{ .technique }}, {{ .edgeClass }})
+{{- end }}
+{{- end }}
+
+Read the results (each probe logs RESULT ... OPEN|BLOCKED):
+
+  kubectl -n {{ .Values.namespace.name }} logs -l app.kubernetes.io/name=npready-attacks --tail=-1 | grep RESULT
+
+Interpretation:
+  BLOCKED on an attack edge  = your NetworkPolicy is doing its job.
+  OPEN on an attack edge     = that lateral/egress path is reachable — the policy
+                               is missing or too permissive for this edge.
+
+Clean up (Jobs auto-delete via ttlSecondsAfterFinished; to remove now):
+
+  helm uninstall {{ .Release.Name }} -n {{ .Values.namespace.name }}
+  kubectl delete namespace {{ .Values.namespace.name }}
+
+SAFETY: these are benign probes (connect + report), not exploits. Run only against
+clusters you are authorised to test. See THREAT_MODEL.md.
