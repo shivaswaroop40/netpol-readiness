@@ -115,11 +115,25 @@ class Inventory:
                           if n.endswith((".yaml", ".yml"))]
         else:
             files = [path]
+        def flatten(doc):
+            """Yield real objects, unwrapping List envelopes.
+
+            ``kubectl get ... -o yaml`` wraps everything in ``kind: List``, which is
+            how most people will hand us manifests. Unwrap recursively so a List of
+            Lists also works.
+            """
+            if not isinstance(doc, dict) or not doc.get("kind"):
+                return
+            if doc["kind"].endswith("List") and isinstance(doc.get("items"), list):
+                for item in doc["items"]:
+                    yield from flatten(item)
+            else:
+                yield doc
+
         for f in files:
             with open(f) as fh:
                 for doc in yaml.safe_load_all(fh):
-                    if isinstance(doc, dict) and doc.get("kind"):
-                        docs.append(doc)
+                    docs.extend(flatten(doc))
         buckets: dict = {k: [] for k in
                          ("deployments", "statefulsets", "daemonsets", "services",
                           "networkpolicies", "ingresses", "rolebindings", "namespaces",

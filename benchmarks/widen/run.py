@@ -88,7 +88,9 @@ def main():
     print("=" * 92)
     print("WIDE-N STRESS TEST — npready config-derivation on real apps")
     print("=" * 92)
-    hdr = f"{'app':22} {'wl':>3} {'svc':>3} {'np':>3} | {'S1':>3} {'S3':>3} {'S4':>3} {'S5':>3} {'S6':>3} | {'real':>4} {'break':>5} {'gate':8}"
+    hdr = (f"{'app':22} {'wl':>3} {'svc':>3} {'np':>3} | "
+           f"{'S1':>3} {'S3':>3} {'S4':>3} {'S5':>3} {'S6':>3} | "
+           f"{'real':>4} {'break':>5} {'gate':8}")
     print(hdr)
     print("-" * len(hdr))
     crashed, useless, useful = [], [], []
