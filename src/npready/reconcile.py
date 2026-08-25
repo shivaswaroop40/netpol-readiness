@@ -50,18 +50,27 @@ def reconcile(needed, admitted, total_workloads=0, protected=None) -> ReconcileR
 
     Needed edges an ingress policy cannot express (egress, DNS, apiserver, world) are
     split into ``out_of_scope`` instead of being counted as ``missing``.
+
+    Crucially, an unadmitted need is only ``missing`` (would break on enforce) if its
+    DESTINATION is actually protected by an ingress policy. If the destination has no
+    policy, it is default-allow — the edge flows, nothing breaks — so it goes to
+    ``unprotected`` (an audit concern: write policy), never to ``missing``. Counting
+    default-allow edges as would-break made the tool cry wolf on unpoliced clusters.
     """
     adm_keys = {e.key() for e in admitted}
     need_keys = {e.key() for e in needed}
+    protected = set(protected or [])
 
-    correct, missing, out_of_scope = [], [], []
+    correct, missing, unprotected, out_of_scope = [], [], [], []
     for e in needed:
         if not _in_scope(e):
             out_of_scope.append(e)
         elif admits(e.key(), adm_keys, target_is_need=True):   # conservative: a port-unknown
             correct.append(e)                                   # need needs an all-ports admit
+        elif e.dst in protected:
+            missing.append(e)                                   # dst is locked down -> would break
         else:
-            missing.append(e)
+            unprotected.append(e)                               # dst default-allow -> flows fine
 
     # unused = admitted edges that satisfy no need. Optimistic here on purpose: do NOT
     # over-flag an admit as removable when a port-unknown need on the pair might use it.
@@ -71,8 +80,9 @@ def reconcile(needed, admitted, total_workloads=0, protected=None) -> ReconcileR
         correct=correct,
         unused=unused,
         missing=missing,
+        unprotected=unprotected,
         out_of_scope=out_of_scope,
-        protected_workloads=set(protected or []),
+        protected_workloads=protected,
         total_workloads=total_workloads,
     )
 
@@ -89,8 +99,9 @@ class ReadinessVerdict:
     scope: str
     gate: str
     readiness_score: float          # 0..1, higher = safer to enforce
-    would_break: list               # list[Edge] — the in-scope missing edges
+    would_break: list               # list[Edge] — missing edges to protected dsts
     over_privilege: list            # list[Edge] — the unused edges
+    unprotected: list               # list[Edge] — deps to default-allow dsts (audit, not break)
     out_of_scope: list              # list[Edge] — egress/infra deps a policy can't express
     protected_fraction: float
     rationale: str
@@ -103,9 +114,11 @@ class ReadinessVerdict:
             "protected_fraction": round(self.protected_fraction, 3),
             "would_break_count": len(self.would_break),
             "over_privilege_count": len(self.over_privilege),
+            "unprotected_count": len(self.unprotected),
             "out_of_scope_count": len(self.out_of_scope),
             "would_break": [_edge_dict(e) for e in self.would_break],
             "over_privilege": [_edge_dict(e) for e in self.over_privilege],
+            "unprotected": [_edge_dict(e) for e in self.unprotected],
             "out_of_scope": [_edge_dict(e) for e in self.out_of_scope],
             "rationale": self.rationale,
         }
@@ -120,14 +133,18 @@ def _edge_dict(e: Edge) -> dict:
 def verdict(result: ReconcileResult, scope: str = "cluster") -> ReadinessVerdict:
     """Turn a reconciliation into an audit/shadow/enforce recommendation.
 
-    The gate is decided by the two failure modes, in priority order:
-      1. any ``missing`` edge  -> SHADOW  (enforcing now would break the app)
-      2. low protected fraction -> AUDIT  (most workloads are default-allow; there
-                                           is not yet enough policy to enforce)
-      3. otherwise              -> ENFORCE (needed edges are admitted; turn it on)
+    The gate is decided in priority order:
+      1. any ``missing`` edge  -> SHADOW  (a policy DOES protect the destination but
+                                           does not admit this declared dependency —
+                                           enforcing now would deny legitimate traffic)
+      2. unprotected deps left, or low coverage -> AUDIT (destinations are still
+                                           default-allow; write policy before enforcing)
+      3. otherwise              -> ENFORCE (every declared dependency to a protected
+                                           destination is admitted; turn it on)
 
-    readiness_score is the fraction of needed edges that are admitted, which is
-    exactly ``1 - false_deny`` measured against the config-derived need set.
+    A ``missing`` edge is only counted when its destination is actually policy-protected
+    — an edge to a default-allow destination flows fine and is an AUDIT concern, not a
+    break. readiness_score is correct / (correct + missing) over protected destinations.
     """
     needed_total = len(result.correct) + len(result.missing)
     readiness = (len(result.correct) / needed_total) if needed_total else 1.0
@@ -138,15 +155,16 @@ def verdict(result: ReconcileResult, scope: str = "cluster") -> ReadinessVerdict
 
     if result.missing:
         gate = Gate.SHADOW
-        rationale = (f"{len(result.missing)} declared dependency edge(s) are not admitted by any "
-                     f"policy; enforcing now would deny legitimate traffic. Add them, then re-check.")
-    elif protected_fraction < 0.5:
+        rationale = (f"{len(result.missing)} declared dependency edge(s) reach a policy-protected "
+                     f"destination but are not admitted; enforcing now would deny them. Fix, re-check.")
+    elif result.unprotected or protected_fraction < 0.5:
         gate = Gate.AUDIT
-        rationale = (f"only {protected_fraction:.0%} of workloads are selected by an ingress policy; "
-                     f"most are still default-allow. Observe and write policy before enforcing.")
+        rationale = (f"{len(result.unprotected)} declared dependency edge(s) reach default-allow "
+                     f"destinations ({protected_fraction:.0%} of workloads policy-protected); write "
+                     f"policy for them before enforcing — they flow today but aren't segmented.")
     else:
         gate = Gate.ENFORCE
-        rationale = ("every config-derived dependency is admitted and most workloads are covered; "
+        rationale = ("every declared dependency to a protected destination is admitted; "
                      "safe to enforce.")
 
     return ReadinessVerdict(
@@ -155,6 +173,7 @@ def verdict(result: ReconcileResult, scope: str = "cluster") -> ReadinessVerdict
         readiness_score=readiness,
         would_break=result.missing,
         over_privilege=result.unused,
+        unprotected=result.unprotected,
         out_of_scope=result.out_of_scope,
         protected_fraction=protected_fraction,
         rationale=rationale,

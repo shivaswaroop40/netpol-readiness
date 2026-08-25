@@ -25,42 +25,50 @@ def test_reconcile_quadrants(mini_inventory):
 
     correct = _keys(res.correct)
     missing = _keys(res.missing)
+    unprotected = _keys(res.unprotected)
     unused = _keys(res.unused)
     oos = _keys(res.out_of_scope)
 
     # CORRECT: the one declared edge the loose policy happens to admit
     assert ("shop/orders-api", "shop/orders-db", 5432) in correct
 
-    # MISSING (would break on enforce): declared in-cluster edge, unadmitted
-    assert ("shop/storefront", "shop/orders-api", 8080) in missing
-    assert ("shop/orders-api", "shop/orders-cache", 6379) in missing
+    # UNPROTECTED (NOT would-break): orders-api / orders-cache have no policy, so these
+    # declared deps flow by default-allow — they must be unprotected, never missing.
+    assert ("shop/storefront", "shop/orders-api", 8080) in unprotected
+    assert ("shop/orders-api", "shop/orders-cache", 6379) in unprotected
+    assert not missing                               # nothing reaches a protected+unadmitted dst
 
-    # ENTRY edge is OUT OF SCOPE (synthetic ingress-controller src can't be matched),
-    # NOT counted as would-break — it must never be in missing.
+    # ENTRY edge is OUT OF SCOPE (synthetic ingress-controller src can't be matched)
     assert ("ingress-controller", "shop/storefront", 80) in oos
-    assert ("ingress-controller", "shop/storefront", 80) not in missing
 
     # UNUSED (over-privilege): admitted but not needed
     assert ("shop/storefront", "shop/orders-db", 5432) in unused
     assert ("shop/reporting", "shop/orders-db", 5432) in unused
 
-    # quadrants are disjoint
-    assert not (missing & unused)
-    assert not (correct & missing)
 
-
-def test_verdict_is_shadow_when_edges_would_break(mini_inventory):
+def test_verdict_is_audit_when_deps_are_unprotected(mini_inventory):
+    """Most workloads have no policy, so declared deps flow by default-allow -> AUDIT,
+    NOT shadow (nothing actually breaks)."""
     needed = derive_needed(mini_inventory)
     admitted, protected = derive_admitted(mini_inventory)
     res = reconcile(needed, admitted, total_workloads=len(mini_inventory.workloads),
                     protected=protected)
     v = verdict(res, scope="shop")
+    assert v.gate == "audit"
+    assert v.unprotected                             # declared deps to default-allow dsts
+    assert not v.would_break
 
-    assert v.gate == "shadow"                       # missing edges -> not safe to enforce
-    assert v.would_break                             # non-empty
-    assert 0.0 <= v.readiness_score < 1.0
-    d = v.to_dict()
-    assert d["would_break_count"] == len(res.missing)
+
+def test_verdict_is_shadow_when_protected_dep_unadmitted():
+    """The real would-break case: a policy DOES protect the destination but denies a
+    declared dependency."""
+    from npready.model import Edge, EdgeClass, Provenance
+    needed = [Edge("a", "b", 5432, EdgeClass.IN_CLUSTER, Provenance.S1_ENV_ENDPOINT)]
+    admitted = [Edge("c", "b", 5432, EdgeClass.IN_CLUSTER, Provenance.POLICY)]  # admits c->b, not a->b
+    res = reconcile(needed, admitted, total_workloads=3, protected={"b"})       # b IS protected
+    v = verdict(res)
+    assert v.gate == "shadow"
+    assert {(e.src, e.dst, e.port) for e in v.would_break} == {("a", "b", 5432)}
 
 
 def test_verdict_enforce_when_all_needs_admitted():

@@ -72,9 +72,10 @@ def cmd_readiness(args):
     c = res.counts
     print(f"  correct (admitted & needed) : {c['correct']}")
     print(f"  unused  (admitted, unneeded): {c['unused']}   over-privilege — safe to remove")
-    print(f"  missing (needed, unadmitted): {c['missing']}   WOULD BREAK ON ENFORCE")
-    print(f"  out-of-scope (egress/DNS/api): {c['out_of_scope']}   need egress policy / cluster-infra")
-    print(f"  workloads protected         : {c['protected_workloads']}/{c['total_workloads']}")
+    print(f"  missing (protected & unadmitted): {c['missing']}   WOULD BREAK ON ENFORCE")
+    print(f"  unprotected (default-allow deps): {c['unprotected']}   flow today; write policy to segment")
+    print(f"  out-of-scope (egress/DNS/api)   : {c['out_of_scope']}   need egress policy / cluster-infra")
+    print(f"  workloads protected            : {c['protected_workloads']}/{c['total_workloads']}")
     print("-" * 74)
     print(f"  readiness score : {v.readiness_score:.2f}   (fraction of needs admitted)")
     print(f"  GATE            : {v.gate.upper()}")

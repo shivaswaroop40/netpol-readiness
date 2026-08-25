@@ -18,13 +18,14 @@ def test_derive_cli(capsys, tmp_path):
     assert len(data["needed"]) > 5
 
 
-def test_readiness_cli_returns_shadow_exit(capsys):
-    """the fixture has missing edges, so readiness must exit non-zero (unsafe)."""
+def test_readiness_cli_audit_on_unprotected_deps(capsys):
+    """the fixture's declared deps reach default-allow dsts -> AUDIT (exit 0), and the
+    output must show the unprotected line and the gate."""
     rc = main(["readiness", "--manifests", MINI])
     printed = capsys.readouterr().out
-    assert "WOULD BREAK ON ENFORCE" in printed
+    assert "unprotected (default-allow deps)" in printed
     assert "GATE" in printed
-    assert rc == 2                                     # shadow gate -> non-zero
+    assert rc == 0                                     # audit gate -> zero (nothing breaks yet)
 
 
 def test_attacks_cli_lists_roster(capsys):

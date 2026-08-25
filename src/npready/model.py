@@ -103,7 +103,8 @@ class ReconcileResult:
 
     correct: list = field(default_factory=list)   # list[Edge] (needed side)
     unused: list = field(default_factory=list)     # list[Edge] (admitted side)
-    missing: list = field(default_factory=list)    # list[Edge] (needed side, in-scope)
+    missing: list = field(default_factory=list)    # would break on enforce (dst is protected)
+    unprotected: list = field(default_factory=list)  # needed, dst default-allow -> flows, no break
     out_of_scope: list = field(default_factory=list)  # needed edges an ingress policy can't express
     protected_workloads: set = field(default_factory=set)
     total_workloads: int = 0
@@ -114,6 +115,7 @@ class ReconcileResult:
             "correct": len(self.correct),
             "unused": len(self.unused),
             "missing": len(self.missing),
+            "unprotected": len(self.unprotected),
             "out_of_scope": len(self.out_of_scope),
             "protected_workloads": len(self.protected_workloads),
             "total_workloads": self.total_workloads,
