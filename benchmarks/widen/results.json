@@ -16,6 +16,24 @@
     "over_priv": 0,
     "out_of_scope": 12,
     "gate": "audit",
+    "s1_edges": [
+      "default/cartservice -> default/redis-cart:6379  [env:REDIS_ADDR=redis-cart:6379]",
+      "default/checkoutservice -> default/cartservice:7070  [env:CART_SERVICE_ADDR=cartservice:7070]",
+      "default/checkoutservice -> default/currencyservice:7000  [env:CURRENCY_SERVICE_ADDR=currencyservice:7000]",
+      "default/checkoutservice -> default/emailservice:5000  [env:EMAIL_SERVICE_ADDR=emailservice:5000]",
+      "default/checkoutservice -> default/paymentservice:50051  [env:PAYMENT_SERVICE_ADDR=paymentservice:50051]",
+      "default/checkoutservice -> default/productcatalogservice:3550  [env:PRODUCT_CATALOG_SERVICE_ADDR=productcatalogservice:3550]",
+      "default/checkoutservice -> default/shippingservice:50051  [env:SHIPPING_SERVICE_ADDR=shippingservice:50051]",
+      "default/frontend -> default/adservice:9555  [env:AD_SERVICE_ADDR=adservice:9555]",
+      "default/frontend -> default/cartservice:7070  [env:CART_SERVICE_ADDR=cartservice:7070]",
+      "default/frontend -> default/checkoutservice:5050  [env:CHECKOUT_SERVICE_ADDR=checkoutservice:5050]",
+      "default/frontend -> default/currencyservice:7000  [env:CURRENCY_SERVICE_ADDR=currencyservice:7000]",
+      "default/frontend -> default/productcatalogservice:3550  [env:PRODUCT_CATALOG_SERVICE_ADDR=productcatalogservice:3550]",
+      "default/frontend -> default/recommendationservice:8080  [env:RECOMMENDATION_SERVICE_ADDR=recommendationservice:8080]",
+      "default/frontend -> default/shippingservice:50051  [env:SHIPPING_SERVICE_ADDR=shippingservice:50051]",
+      "default/loadgenerator -> default/frontend:80  [env:FRONTEND_ADDR=frontend:80]",
+      "default/recommendationservice -> default/productcatalogservice:3550  [env:PRODUCT_CATALOG_SERVICE_ADDR=productcatalogservice:3550]"
+    ],
     "app": "Online Boutique",
     "stress": "env-addr microservices (gRPC)",
     "error": null
@@ -37,6 +55,7 @@
     "over_priv": 0,
     "out_of_scope": 6,
     "gate": "audit",
+    "s1_edges": [],
     "app": "Bookinfo",
     "stress": "hardcoded service names",
     "error": null
@@ -58,6 +77,9 @@
     "over_priv": 0,
     "out_of_scope": 14,
     "gate": "audit",
+    "s1_edges": [
+      "sock-shop/user -> sock-shop/user-db:27017  [env:mongo=user-db:27017]"
+    ],
     "app": "Sock Shop",
     "stress": "hardcoded service names",
     "error": null
@@ -79,6 +101,7 @@
     "over_priv": 0,
     "out_of_scope": 1,
     "gate": "audit",
+    "s1_edges": [],
     "app": "Podinfo",
     "stress": "single stateless service",
     "error": null
@@ -100,6 +123,9 @@
     "over_priv": 0,
     "out_of_scope": 2,
     "gate": "enforce",
+    "s1_edges": [
+      "default/r-redis-replicas -> default/r-redis-master:6379  [env:REDIS_MASTER_HOST=r-redis-master-0.r-redis-headless.default.svc.cluster.local:6379]"
+    ],
     "app": "Redis (replication)",
     "stress": "StatefulSet + headless peers",
     "error": null
@@ -121,6 +147,7 @@
     "over_priv": 3,
     "out_of_scope": 2,
     "gate": "enforce",
+    "s1_edges": [],
     "app": "PostgreSQL-HA",
     "stress": "StatefulSet cluster",
     "error": null
@@ -142,6 +169,7 @@
     "over_priv": 1,
     "out_of_scope": 2,
     "gate": "enforce",
+    "s1_edges": [],
     "app": "RabbitMQ",
     "stress": "StatefulSet cluster",
     "error": null
@@ -163,6 +191,7 @@
     "over_priv": 0,
     "out_of_scope": 1,
     "gate": "enforce",
+    "s1_edges": [],
     "app": "Kafka",
     "stress": "StatefulSet cluster",
     "error": null
@@ -184,6 +213,9 @@
     "over_priv": 1,
     "out_of_scope": 2,
     "gate": "enforce",
+    "s1_edges": [
+      "default/mg-mongodb-arbiter -> default/mg-mongodb:27017  [env:MONGODB_INITIAL_PRIMARY_HOST=mg-mongodb-0.mg-mongodb-headless:27017]"
+    ],
     "app": "MongoDB (replicaset)",
     "stress": "StatefulSet replicaset",
     "error": null
@@ -205,6 +237,9 @@
     "over_priv": 4,
     "out_of_scope": 2,
     "gate": "enforce",
+    "s1_edges": [
+      "default/wp-wordpress -> default/wp-mariadb:3306  [env:MARIADB_HOST=wp-mariadb:3306]"
+    ],
     "app": "WordPress",
     "stress": "env-based DB endpoint",
     "error": null
@@ -226,6 +261,9 @@
     "over_priv": 4,
     "out_of_scope": 3,
     "gate": "enforce",
+    "s1_edges": [
+      "default/wp-wordpress -> default/wp-mariadb:3306  [env:MARIADB_HOST=wp-mariadb:3306]"
+    ],
     "app": "WordPress+Ingress",
     "stress": "Ingress route (S3)",
     "error": null
@@ -247,6 +285,9 @@
     "over_priv": 2,
     "out_of_scope": 3,
     "gate": "enforce",
+    "s1_edges": [
+      "default/gh-ghost -> default/gh-mysql:3306  [env:GHOST_DATABASE_HOST=gh-mysql:3306]"
+    ],
     "app": "Ghost+Ingress",
     "stress": "Ingress route (S3)",
     "error": null
@@ -268,6 +309,7 @@
     "over_priv": 0,
     "out_of_scope": 6,
     "gate": "audit",
+    "s1_edges": [],
     "app": "kube-prometheus-stack",
     "stress": "large mixed stack (134 objs)",
     "error": null

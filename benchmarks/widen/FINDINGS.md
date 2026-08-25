@@ -20,21 +20,19 @@ MongoDB), env-DB + Ingress apps (WordPress, Ghost), and a large mixed stack
 |---|--:|--:|--:|--:|--:|---|
 | Online Boutique | 12 | 16 | 0 | 0 | 16 | audit |
 | Bookinfo | 6 | 0 | 0 | 0 | 0 | audit |
-| Sock Shop | 14 | 0 | 0 | 0 | 0 | audit |
+| Sock Shop | 14 | 1 | 0 | 0 | 1 | audit |
 | Podinfo | 1 | 0 | 0 | 0 | 0 | audit |
-| Redis (replication) | 2 | 0 | 0 | 4 | 4 | enforce |
-| PostgreSQL-HA | 2 | 1 | 0 | 1 | 2 | enforce |
+| Redis (replication) | 2 | 1 | 0 | 3 | 4 | enforce |
+| PostgreSQL-HA | 2 | 0 | 0 | 1 | 1 | enforce |
 | RabbitMQ | 1 | 0 | 0 | 4 | 4 | enforce |
 | Kafka | 1 | 0 | 0 | 3 | 3 | enforce |
-| MongoDB (replicaset) | 2 | 2 | 0 | 2 | 4 | enforce |
+| MongoDB (replicaset) | 2 | 1 | 0 | 2 | 3 | enforce |
 | WordPress | 2 | 1 | 0 | 1 | 2 | enforce |
 | WordPress+Ingress | 2 | 1 | 1 | 1 | 3 | enforce |
 | Ghost+Ingress | 2 | 1 | 1 | 1 | 3 | enforce |
 | kube-prometheus-stack | 4 | 0 | 0 | 0 | 0 | audit |
 
-Source hit-rate (apps where the source found > 0 edges): **S1 6/13,
-S3 2/13, S6 8/13**, S4 (DNS) 13/13,
-S5 (apiserver) 2/13. No crashes across all 13 apps.
+Source hit-rate (apps where the source found > 0 edges): **S1 7/13, S3 2/13, S6 8/13**, S4 (DNS) 13/13, S5 (apiserver) 2/13. No crashes across all 13 apps.
 
 ## Where the TOOL broke — found and fixed by this benchmark
 1. **Cry-wolf would-break.** Online Boutique (0 NetworkPolicies) was first reported
@@ -96,3 +94,66 @@ application code), and kube-prometheus declares its targets in ServiceMonitor CR
 is the genuine boundary between *config-derivable* and *code-only* dependencies — and
 it is precisely why observation remains necessary. Config-derivation cannot be pushed
 past it by better heuristics; only by static analysis of application code.
+
+## Appendix — every S1 edge, so the false-positive claim is checkable
+
+The zero-false-positive claim above covers these **22** configuration-value edges.
+Each is shown with the literal configuration that produced it. Regenerate with
+`python3 benchmarks/widen/run.py` — they are stored in `results.json` under `s1_edges`.
+
+**Online Boutique**
+
+```
+default/cartservice -> default/redis-cart:6379  [env:REDIS_ADDR=redis-cart:6379]
+default/checkoutservice -> default/cartservice:7070  [env:CART_SERVICE_ADDR=cartservice:7070]
+default/checkoutservice -> default/currencyservice:7000  [env:CURRENCY_SERVICE_ADDR=currencyservice:7000]
+default/checkoutservice -> default/emailservice:5000  [env:EMAIL_SERVICE_ADDR=emailservice:5000]
+default/checkoutservice -> default/paymentservice:50051  [env:PAYMENT_SERVICE_ADDR=paymentservice:50051]
+default/checkoutservice -> default/productcatalogservice:3550  [env:PRODUCT_CATALOG_SERVICE_ADDR=productcatalogservice:3550]
+default/checkoutservice -> default/shippingservice:50051  [env:SHIPPING_SERVICE_ADDR=shippingservice:50051]
+default/frontend -> default/adservice:9555  [env:AD_SERVICE_ADDR=adservice:9555]
+default/frontend -> default/cartservice:7070  [env:CART_SERVICE_ADDR=cartservice:7070]
+default/frontend -> default/checkoutservice:5050  [env:CHECKOUT_SERVICE_ADDR=checkoutservice:5050]
+default/frontend -> default/currencyservice:7000  [env:CURRENCY_SERVICE_ADDR=currencyservice:7000]
+default/frontend -> default/productcatalogservice:3550  [env:PRODUCT_CATALOG_SERVICE_ADDR=productcatalogservice:3550]
+default/frontend -> default/recommendationservice:8080  [env:RECOMMENDATION_SERVICE_ADDR=recommendationservice:8080]
+default/frontend -> default/shippingservice:50051  [env:SHIPPING_SERVICE_ADDR=shippingservice:50051]
+default/loadgenerator -> default/frontend:80  [env:FRONTEND_ADDR=frontend:80]
+default/recommendationservice -> default/productcatalogservice:3550  [env:PRODUCT_CATALOG_SERVICE_ADDR=productcatalogservice:3550]
+```
+
+**Sock Shop**
+
+```
+sock-shop/user -> sock-shop/user-db:27017  [env:mongo=user-db:27017]
+```
+
+**Redis (replication)**
+
+```
+default/r-redis-replicas -> default/r-redis-master:6379  [env:REDIS_MASTER_HOST=r-redis-master-0.r-redis-headless.default.svc.cluster.local:6379]
+```
+
+**MongoDB (replicaset)**
+
+```
+default/mg-mongodb-arbiter -> default/mg-mongodb:27017  [env:MONGODB_INITIAL_PRIMARY_HOST=mg-mongodb-0.mg-mongodb-headless:27017]
+```
+
+**WordPress**
+
+```
+default/wp-wordpress -> default/wp-mariadb:3306  [env:MARIADB_HOST=wp-mariadb:3306]
+```
+
+**WordPress+Ingress**
+
+```
+default/wp-wordpress -> default/wp-mariadb:3306  [env:MARIADB_HOST=wp-mariadb:3306]
+```
+
+**Ghost+Ingress**
+
+```
+default/gh-ghost -> default/gh-mysql:3306  [env:GHOST_DATABASE_HOST=gh-mysql:3306]
+```

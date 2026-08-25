@@ -63,6 +63,14 @@ def analyse(path):
         "over_priv": len(res.unused),
         "out_of_scope": len(res.out_of_scope),
         "gate": v.gate,
+        # The S1 edges verbatim, with the configuration value that produced each.
+        # The thesis claims zero false positives among these; that claim is only
+        # checkable if the edges themselves are on the record.
+        "s1_edges": sorted(
+            f"{e.src} -> {e.dst}:{e.port}  [{e.evidence}]"
+            for e in needed
+            if e.provenance is Provenance.S1_ENV_ENDPOINT
+        ),
     }
 
 
