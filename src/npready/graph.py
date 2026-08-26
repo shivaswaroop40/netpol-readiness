@@ -42,8 +42,18 @@ ENDPOINT_RE = re.compile(
     r"(_HOST|_HOSTNAME|_URL|_URI|_ENDPOINT|_ADDR|_ADDRESS|_SERVER|_BROKER|_BROKERS|_DSN)$")
 # Values often carry several endpoints (broker lists, comma/space separated).
 TOKEN_SPLIT_RE = re.compile(r"[\s,;|]+")
-# Strip an optional scheme (http://, redis://, postgres://, tcp://, nats://, ...).
-SCHEME_RE = re.compile(r"^[a-z][a-z0-9+.\-]*://")
+# Capture an optional scheme (http://, redis://, postgres://, tcp://, nats://, ...).
+SCHEME_RE = re.compile(r"^([a-z][a-z0-9+.\-]*)://")
+# Default port per scheme, used only when the value carries no explicit ":port".
+# A NetworkPolicy rule needs a port, so an edge derived without one is not
+# actionable; "https://host" plainly means 443 and should say so.
+SCHEME_PORTS = {
+    "http": 80, "https": 443, "ws": 80, "wss": 443,
+    "redis": 6379, "rediss": 6379, "postgres": 5432, "postgresql": 5432,
+    "mysql": 3306, "mongodb": 27017, "mongodb+srv": 27017, "amqp": 5672,
+    "amqps": 5671, "nats": 4222, "kafka": 9092, "grpc": 80, "grpcs": 443,
+    "ldap": 389, "ldaps": 636, "memcached": 11211, "etcd": 2379,
+}
 # From the remaining "host[:port][/path]" (or "user:pass@host:port"), take host+port.
 HOST_RE = re.compile(r"^(?:[^@/]*@)?([a-z0-9][a-z0-9.\-]*[a-z0-9])(?::(\d+))?")
 # A hostname with a dot that is NOT a cluster-internal suffix looks like egress.
@@ -56,12 +66,22 @@ def _parse_endpoint(val: str):
     'http://orders-api:8080/x' -> ('orders-api', 8080)
     'redis://:pw@cache:6379'   -> ('cache', 6379)
     'orders-db:5432'           -> ('orders-db', 5432)
+    'https://platform.example' -> ('platform.example', 443)   # scheme supplies the port
+
+    An explicit ``:port`` always wins; the scheme is only consulted when the value
+    carries none. Without this an endpoint like ``ANKRA_URL=https://host`` yields a
+    portless edge, which cannot be expressed as a NetworkPolicy rule.
     """
-    v = SCHEME_RE.sub("", val.strip().lower())
+    raw = val.strip().lower()
+    sm = SCHEME_RE.match(raw)
+    scheme = sm.group(1) if sm else None
+    v = raw[sm.end():] if sm else raw
     m = HOST_RE.match(v)
     if not m:
         return None, None
     port = int(m.group(2)) if m.group(2) and m.group(2).isdigit() else None
+    if port is None and scheme:
+        port = SCHEME_PORTS.get(scheme)
     return m.group(1), port
 
 

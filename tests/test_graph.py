@@ -169,3 +169,20 @@ def test_pod_qualified_headless_host_resolves_in_cluster():
     edges = [e for e in derive_needed(Inventory.from_dict(snap)) if e.src == "s/arb"]
     assert any(e.dst == "s/db" for e in edges), "must resolve to the backing workload"
     assert not any(e.dst == "world" for e in edges), "must NOT be classified as egress"
+
+
+def test_scheme_supplies_port_when_value_has_none():
+    """`ANKRA_URL=https://host` is a real egress dependency on :443. Without the
+    scheme default it derived a portless edge, which cannot be written as a
+    NetworkPolicy rule. Found on a live cluster; an explicit port still wins."""
+    from npready.graph import _parse_endpoint
+
+    assert _parse_endpoint("https://platform.thesis.example") == ("platform.thesis.example", 443)
+    assert _parse_endpoint("http://svc") == ("svc", 80)
+    assert _parse_endpoint("postgres://u:p@db") == ("db", 5432)
+    assert _parse_endpoint("nats://gw") == ("gw", 4222)
+    # explicit port wins over the scheme default
+    assert _parse_endpoint("https://host:8443") == ("host", 8443)
+    assert _parse_endpoint("redis://:pw@cache:6379") == ("cache", 6379)
+    # no scheme, no port -> still unknown, not guessed
+    assert _parse_endpoint("plainhost") == ("plainhost", None)

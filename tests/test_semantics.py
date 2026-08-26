@@ -237,4 +237,10 @@ def test_externalname_and_external_fqdn_are_egress():
     egress = [e for e in edges if e.edge_class == EdgeClass.EGRESS]
     dsts = {e.dst for e in egress}
     assert dsts == {"world"}                             # both resolve to the world token
-    assert len(egress) == 2
+    # Both values mean "leave the cluster on 443": PAY_URL says so explicitly and
+    # WEBHOOK_URL says so via its https scheme. They therefore collapse to one
+    # (src, world, 443) edge, which is exactly the single rule a NetworkPolicy
+    # would need. An earlier version derived a portless second edge instead,
+    # because the scheme was discarded rather than consulted for a default port.
+    assert {(e.dst, e.port) for e in egress} == {("world", 443)}
+    assert len(egress) == 1
