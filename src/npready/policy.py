@@ -43,12 +43,14 @@ def derive_admitted(inv: Inventory):
                 protected.add(t.id)
 
         for rule in (spec.get("ingress") or []):
-            ports = _rule_ports(rule)
+            # a rule's ports resolve per TARGET: a named port refers to the
+            # selected pod's containerPort of that name.
+            target_ports = [(t, _rule_ports(rule, t)) for t in targets]
             for f in (rule.get("from") or [{"__all__": True}]):
                 srcs = _match_from(f, ns, wl, ns_labels)
                 for s in srcs:
-                    for p in ports:
-                        for t in targets:
+                    for t, ports in target_ports:
+                        for p in ports:
                             # keep self-edges (X->X): a policy — including an allow-all
                             # ingress — that admits a pod from a selector matching itself
                             # genuinely permits StatefulSet intra-cluster peering.
@@ -61,12 +63,33 @@ def derive_admitted(inv: Inventory):
     return list(best.values()), protected
 
 
-def _rule_ports(rule: dict):
+def _rule_ports(rule: dict, target):
+    """The pod ports one ingress rule admits on ``target``, as numbers.
+
+    ``NetworkPolicyPort.port`` is "a numerical or NAMED port on a pod": a name
+    resolves against the target container's declared port names, and a name the
+    target does not declare matches nothing on that pod. ``endPort`` (numeric
+    ``port`` only) extends the entry to an inclusive ``(start, end)`` range.
+    An empty/absent ``ports`` list means all ports (``None``).
+    """
+    entries = rule.get("ports")
+    if not entries:
+        return [None]                                 # no ports named = all ports
     ports = []
-    for p in (rule.get("ports") or []):
+    for p in entries:
         port = p.get("port")
-        ports.append(int(port) if isinstance(port, int) else port)
-    return ports or [None]                            # no ports named = all ports
+        if port is None:
+            ports.append(None)                        # protocol-only entry = all ports
+            continue
+        if isinstance(port, str) and not port.isdigit():
+            num = target.port_names.get(port)
+            if num is not None:
+                ports.append(num)
+            continue                                  # unknown name: admits nothing here
+        port = int(port)
+        end = p.get("endPort")
+        ports.append((port, int(end)) if end is not None else port)
+    return ports
 
 
 def _match_from(f: dict, ns: str, wl: list, ns_labels: dict):

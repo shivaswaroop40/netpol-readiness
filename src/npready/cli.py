@@ -19,15 +19,23 @@ from .graph import derive_needed
 from .inventory import Inventory
 from .policy import derive_admitted
 from .reconcile import reconcile, verdict
-from .score import decompose_false_deny, score
+from .score import decompose_false_deny, fmt_port, score
 
 
 def _load_inventory(args) -> Inventory:
-    if args.manifests:
-        return Inventory.from_manifests(args.manifests)
-    if args.snapshot:
-        return Inventory.from_dict(json.load(open(args.snapshot)))
+    if args.manifests or args.snapshot:
+        if args.manifests:
+            inv = Inventory.from_manifests(args.manifests)
+        else:
+            inv = Inventory.from_dict(json.load(open(args.snapshot)))
+        # offline sources are loaded whole; honour --namespace by filtering,
+        # so the scope printed on the report is the scope actually analysed.
+        return inv.restrict(args.namespace) if args.namespace else inv
     return Inventory.from_cluster(context=args.context, namespace=args.namespace)
+
+
+def _p(port) -> str:
+    return "*" if port is None else fmt_port(port)
 
 
 def _add_source_args(p):
@@ -51,7 +59,7 @@ def cmd_derive(args):
     for k, v in sorted(by_prov.items()):
         print(f"  {k:14} {v}")
     for e in sorted(needed, key=lambda x: (x.src, x.dst))[:args.limit]:
-        print(f"    {e.src:38} -> {e.dst:28} :{e.port or '*':<6} [{e.provenance.value}] {e.evidence}")
+        print(f"    {e.src:38} -> {e.dst:28} :{_p(e.port):<6} [{e.provenance.value}] {e.evidence}")
     if args.json:
         json.dump({"needed": [_ed(e) for e in needed]}, open(args.json, "w"), indent=2)
         print(f"wrote {args.json}")
@@ -83,11 +91,11 @@ def cmd_readiness(args):
     if v.would_break:
         print("\n  WOULD BREAK ON ENFORCE (fix these first):")
         for e in sorted(v.would_break, key=lambda x: (x.src, x.dst))[:args.limit]:
-            print(f"    {e.src:36} -> {e.dst:26} :{e.port or '*':<6} [{e.provenance.value}] {e.evidence}")
+            print(f"    {e.src:36} -> {e.dst:26} :{_p(e.port):<6} [{e.provenance.value}] {e.evidence}")
     if args.show_unused and v.over_privilege:
         print("\n  OVER-PRIVILEGE (safe to remove):")
         for e in sorted(v.over_privilege, key=lambda x: (x.src, x.dst))[:args.limit]:
-            print(f"    {e.src:36} -> {e.dst:26} :{e.port or '*'}")
+            print(f"    {e.src:36} -> {e.dst:26} :{_p(e.port)}")
     if args.json:
         json.dump(v.to_dict(), open(args.json, "w"), indent=2)
         print(f"\nwrote {args.json}")

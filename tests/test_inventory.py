@@ -24,7 +24,7 @@ def _kubectl_output(kind):
 
 
 def test_from_cluster_maps_kubectl_json(monkeypatch):
-    def fake_run(cmd, capture_output, text):
+    def fake_run(cmd, capture_output, text, timeout=None):
         # cmd is a list like ["kubectl","--context","c","get","deployments",...]
         kind = cmd[cmd.index("get") + 1]
         return mock.Mock(returncode=0, stdout=_kubectl_output(kind), stderr="")
@@ -42,7 +42,7 @@ def test_from_cluster_maps_kubectl_json(monkeypatch):
 
 def test_from_cluster_forbidden_is_tolerated(monkeypatch):
     """A 403/forbidden on one kind must not crash the load (returns empty for it)."""
-    def fake_run(cmd, capture_output, text):
+    def fake_run(cmd, capture_output, text, timeout=None):
         return mock.Mock(returncode=1, stdout="", stderr="Error: deployments is forbidden")
 
     monkeypatch.setattr("npready.inventory.subprocess.run", fake_run)

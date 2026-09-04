@@ -41,11 +41,24 @@ def _keyset(edges: Iterable) -> set:
     return {_as_key(e) for e in edges}
 
 
+def fmt_port(p) -> str:
+    """Render a port key: number, ``lo-hi`` for an endPort range, the value as-is
+    otherwise (``None`` prints as the wildcard it is)."""
+    if isinstance(p, tuple):
+        return f"{p[0]}-{p[1]}"
+    return str(p)
+
+
 def admits(target: Key, admit: set, *, target_is_need: bool = False) -> bool:
     """Does the admit-set permit ``target``?
 
     An admit edge with ``port=None`` (a policy rule with no ``ports``) permits any
     port on the pair; an exact ``(s,d,p)`` match permits that port.
+
+    A port on either side may also be an ``(start, end)`` tuple — an ``endPort``
+    range from a policy rule. An admit range permits every port it covers; a
+    range *target* (an admitted range checked for use against needs) counts as
+    admitted when any covered port is.
 
     The tricky case is a *target* whose port is unknown (``None``). Direction matters:
       * for an ATTACK (default), be pessimistic about security — treat the attack as
@@ -61,7 +74,19 @@ def admits(target: Key, admit: set, *, target_is_need: bool = False) -> bool:
         return True
     if (s, d, None) in admit:           # policy admits all ports on the pair
         return True
-    if p is None and not target_is_need:
+    if p is not None:
+        for a, b, ap in admit:
+            if a != s or b != d:
+                continue
+            if isinstance(p, tuple):    # range target: any overlap admits
+                lo, hi = p
+                if (isinstance(ap, int) and lo <= ap <= hi) or \
+                        (isinstance(ap, tuple) and ap[0] <= hi and lo <= ap[1]):
+                    return True
+            elif isinstance(ap, tuple) and ap[0] <= p <= ap[1]:
+                return True
+        return False
+    if not target_is_need:
         return any(a[0] == s and a[1] == d for a in admit)   # optimistic (attacks only)
     return False
 
@@ -92,8 +117,8 @@ def score(admitted: Iterable, L: Iterable, A: Iterable,
         "block_rate": round(1.0 - over_priv, 6),
         "over_privilege": round(over_priv, 6),
         "false_deny": round(false_deny, 6),
-        "admitted_attacks": sorted(f"{s}->{d}:{p}" for s, d, p in admitted_attacks),
-        "missed_legit": sorted(f"{s}->{d}:{p}" for s, d, p in missed_legit),
+        "admitted_attacks": sorted(f"{s}->{d}:{fmt_port(p)}" for s, d, p in admitted_attacks),
+        "missed_legit": sorted(f"{s}->{d}:{fmt_port(p)}" for s, d, p in missed_legit),
     }
     if L_inscope is not None:
         Lin = _keyset(L_inscope)
@@ -125,6 +150,7 @@ def decompose_false_deny(admitted: Iterable, L: Iterable, observed: Iterable) ->
         "false_deny": round(len(denied) / n, 6),
         "coverage_component": round(len(never_observed) / n, 6),
         "tool_penalty": round(len(observed_but_denied) / n, 6),
-        "never_observed": sorted(f"{s}->{d}:{p}" for s, d, p in never_observed),
-        "observed_but_denied": sorted(f"{s}->{d}:{p}" for s, d, p in observed_but_denied),
+        "never_observed": sorted(f"{s}->{d}:{fmt_port(p)}" for s, d, p in never_observed),
+        "observed_but_denied": sorted(f"{s}->{d}:{fmt_port(p)}"
+                                      for s, d, p in observed_but_denied),
     }

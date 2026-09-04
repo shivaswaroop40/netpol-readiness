@@ -73,6 +73,11 @@ def _parse_endpoint(val: str):
     portless edge, which cannot be expressed as a NetworkPolicy rule.
     """
     raw = val.strip().lower()
+    # JDBC URLs carry a driver prefix before the scheme: jdbc:postgresql://host:5432/db.
+    # Strip it so the ordinary URL path below sees "postgresql://host:5432/db"; without
+    # this the literal token "jdbc" is taken as the host and the edge is lost.
+    if raw.startswith("jdbc:"):
+        raw = raw[len("jdbc:"):]
     sm = SCHEME_RE.match(raw)
     scheme = sm.group(1) if sm else None
     v = raw[sm.end():] if sm else raw
@@ -195,7 +200,9 @@ def s1_env_endpoints(inv: Inventory, svc_index: dict) -> list:
                         edges.append(Edge(w.id, "world", p, EdgeClass.EGRESS,
                                           Provenance.S1_ENV_ENDPOINT, conf, ev))
                         continue
-                    port_final = p or (svc.ports[0][0] if svc.ports else None)
+                    # the config declares the SERVICE port the caller dials; the
+                    # policy-relevant port is the pod-side one it DNATs to.
+                    port_final = inv.pod_port(svc, dialed=p)
                     for tgt in inv.workloads_backing(svc):
                         if tgt.id != w.id:
                             edges.append(Edge(w.id, tgt.id, port_final, EdgeClass.IN_CLUSTER,
@@ -219,9 +226,13 @@ def s3_ingress(inv: Inventory, svc_index: dict) -> list:
             for path in ((rule.get("http") or {}).get("paths") or []):
                 b = ((path.get("backend") or {}).get("service") or {})
                 svc = svc_index.get((ns, b.get("name")))
-                port = ((b.get("port") or {}).get("number"))
                 if svc is None:
                     continue
+                bport = b.get("port") or {}
+                # backend names a Service port (by number or name); the pod
+                # receives traffic on that entry's targetPort.
+                port = inv.pod_port(svc, dialed=bport.get("number"),
+                                    port_name=bport.get("name"))
                 for tgt in inv.workloads_backing(svc):
                     edges.append(Edge("ingress-controller", tgt.id, port, EdgeClass.ENTRY,
                                       Provenance.S3_INGRESS, evidence=f"ingress/{name}"))
@@ -273,7 +284,9 @@ def s6_peers(inv: Inventory) -> list:
         if svc.kind != "Headless":
             continue
         peers = inv.workloads_backing(svc)
-        ports = [p for p, _ in svc.ports] or [None]
+        # peers discover each other via Endpoints, whose port is the resolved
+        # targetPort — the pod-side port a NetworkPolicy must admit.
+        ports = [inv.endpoint_port(svc, e) for e in svc.ports] or [None]
         for a in peers:
             for b in peers:
                 if a.id == b.id and a.kind != "statefulset":

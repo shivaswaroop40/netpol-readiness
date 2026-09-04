@@ -71,11 +71,16 @@ class Edge:
     differ only in port are distinct — port granularity is load-bearing, because
     an SSRF to :80 and a legitimate egress to :443 collapse together if port is
     dropped, which is exactly how port-blind tools hide over-privilege.
+
+    Edges are always keyed on the POD-side port (the post-DNAT targetPort), because
+    that is the port a NetworkPolicy governs. An admitted edge from a policy rule
+    with ``endPort`` carries an inclusive ``(start, end)`` tuple instead of an int;
+    :func:`npready.score.admits` understands both.
     """
 
     src: Identity
     dst: Identity
-    port: Optional[int] = None
+    port: Optional[int] = None     # int | (start, end) | None
     edge_class: EdgeClass = EdgeClass.IN_CLUSTER
     provenance: Provenance = Provenance.OBSERVED
     confidence: float = 1.0
