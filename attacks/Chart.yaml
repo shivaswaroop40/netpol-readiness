@@ -7,8 +7,8 @@ description: >-
   unauthorized edge and reports OPEN or BLOCKED. Deploy it against a namespace, turn
   your policies on, and see which edges are actually denied.
 type: application
-version: 0.2.1
-appVersion: "0.2.1"
+version: 0.3.0
+appVersion: "0.3.0"
 keywords: [security, networkpolicy, microsegmentation, attack-simulation, mitre-attack]
 home: https://github.com/shivaswaroop40/netpol-readiness
 sources: [https://github.com/shivaswaroop40/netpol-readiness]

@@ -10,8 +10,10 @@ metadata:
   labels:
     {{- include "npready.labels" $root | nindent 4 }}
     npready.dev/family: {{ .id | quote }}
-    npready.dev/technique: {{ .technique | quote }}
+    npready.dev/technique: {{ .technique | replace "+" "_" | replace "/" "_" | quote }}
     npready.dev/edge-class: {{ .edgeClass | quote }}
+  annotations:
+    npready.dev/technique-attack-id: {{ .technique | quote }}
 spec:
   backoffLimit: {{ $root.Values.probe.backoffLimit }}
   activeDeadlineSeconds: {{ $root.Values.probe.activeDeadlineSeconds }}
