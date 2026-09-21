@@ -15,6 +15,9 @@ venv/
 htmlcov/
 .mypy_cache/
 
+# Benchmark corpus (fetched by benchmarks/widen/fetch.sh)
+benchmarks/widen/_corpus/
+
 # Editors / OS
 .DS_Store
 *.swp

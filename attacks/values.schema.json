@@ -3,9 +3,35 @@
   "title": "npready-attacks values",
   "type": "object",
   "properties": {
+    "namespace": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "comment": "RFC 1123 label — the disposable namespace the probes run in",
+          "type": "string",
+          "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
+        },
+        "create": { "type": "boolean" }
+      }
+    },
+    "compromisedIdentity": {
+      "type": "object",
+      "properties": {
+        "serviceAccountName": {
+          "comment": "empty (namespace default SA) or an RFC 1123 name; no whitespace/metacharacters",
+          "type": "string",
+          "pattern": "^([a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?)?$"
+        }
+      }
+    },
     "probe": {
       "type": "object",
       "properties": {
+        "image": {
+          "comment": "an OCI reference; require a digest so the probe identity cannot be swapped by a tag rewrite",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._/:-]*@sha256:[a-f0-9]{64}$"
+        },
         "timeoutSeconds": { "type": "integer", "minimum": 1, "maximum": 60 },
         "activeDeadlineSeconds": { "type": "integer", "minimum": 1, "maximum": 600 },
         "ttlSecondsAfterFinished": { "type": "integer", "minimum": 0 },

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "npready"
-version = "0.2.1"
+version = "0.3.0"
 description = "Enforcement-readiness analysis and adversarial evaluation for Kubernetes NetworkPolicies"
 readme = "README.md"
 requires-python = ">=3.9"

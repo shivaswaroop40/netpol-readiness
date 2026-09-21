@@ -1,0 +1,21 @@
+# Make the sdist self-testing and self-documenting.
+include LICENSE README.md CHANGELOG.md CITATION.cff
+include THREAT_MODEL.md SECURITY.md ARCHITECTURE.md CONTRIBUTING.md CODE_OF_CONDUCT.md
+include pyproject.toml
+include src/npready/py.typed
+
+# Tests must ship complete: conftest + fixtures, or collection fails from the sdist.
+recursive-include tests *.py
+recursive-include tests/fixtures *.yaml
+
+# The attack chart is part of the artifact.
+recursive-include attacks *.yaml *.json *.tpl *.txt
+
+# Docs and reproducible benchmark (scripts + committed results, not the fetched corpus).
+recursive-include docs *.md
+include benchmarks/widen/run.py benchmarks/widen/fetch.sh
+include benchmarks/widen/FINDINGS.md benchmarks/widen/results.json
+recursive-include examples *.sh *.yaml
+
+prune benchmarks/widen/_corpus
+global-exclude *.py[cod] __pycache__/*

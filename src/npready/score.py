@@ -127,6 +127,60 @@ def score(admitted: Iterable, L: Iterable, A: Iterable,
     return out
 
 
+def fuse(declared: Iterable, observed: Iterable, L: Iterable, A: Iterable) -> dict:
+    """Coverage-by-source and the fusion measurement (the thesis C5 result).
+
+    Neither configuration nor observation is safe to rely on alone, and which one
+    wins is not knowable in advance: on an app that *declares* its dependencies
+    config reaches edges no observation window fires; on one that hard-codes them
+    observation is the only source. The resolution is to take the union and never
+    to choose. This scores all three sources against the same observation-independent
+    ground truth ``L`` (and attack set ``A``):
+
+      config_only : the config-derived (declared) edges alone
+      observed    : the observer's edges alone
+      fused       : their union — what a policy built from both would admit
+
+    The safety argument is checked, not assumed: ``declared ∩ A`` must be empty, so
+    adding config-declared edges to an observation-only policy can never admit an
+    attack (fusion costs nothing on the security axis). This is verified at port
+    granularity, where it holds exactly; at identity-pair granularity a single
+    ``src->dst`` may legitimately need one port while an attack targets another, so
+    the intersection there is an artifact of dropping the port, not of fusion.
+    """
+    dk = _keyset(declared)
+    ok = _keyset(observed)
+    Ak = _keyset(A)
+    fused = dk | ok
+
+    config_only = score(dk, L, A)
+    observed_s = score(ok, L, A)
+    fused_s = score(fused, L, A)
+
+    declared_attacks = sorted(f"{s}->{d}:{fmt_port(p)}" for (s, d, p) in (dk & Ak))
+    return {
+        "config_only": config_only,
+        "observed": observed_s,
+        "fused": fused_s,
+        "coverage": {
+            "config_only": round(1.0 - config_only["false_deny"], 6),
+            "observed": round(1.0 - observed_s["false_deny"], 6),
+            "fused": round(1.0 - fused_s["false_deny"], 6),
+        },
+        "fused_coverage_gain_over_observed": round(
+            observed_s["false_deny"] - fused_s["false_deny"], 6),
+        "fused_over_privilege_delta": round(
+            fused_s["over_privilege"] - observed_s["over_privilege"], 6),
+        "declared_intersect_attacks": {
+            "edges": declared_attacks,
+            "count": len(declared_attacks),
+            "safe": len(declared_attacks) == 0,
+            "note": "must be empty: config-declared edges name no attack path, "
+                    "so fusion cannot raise over-privilege",
+        },
+    }
+
+
 def decompose_false_deny(admitted: Iterable, L: Iterable, observed: Iterable) -> dict:
     """Split false-deny into the part no observer could fix (coverage) and the part
     a better mechanism could fix (tool_penalty).

@@ -20,7 +20,7 @@
       "default/cartservice -> default/redis-cart:6379  [env:REDIS_ADDR=redis-cart:6379]",
       "default/checkoutservice -> default/cartservice:7070  [env:CART_SERVICE_ADDR=cartservice:7070]",
       "default/checkoutservice -> default/currencyservice:7000  [env:CURRENCY_SERVICE_ADDR=currencyservice:7000]",
-      "default/checkoutservice -> default/emailservice:5000  [env:EMAIL_SERVICE_ADDR=emailservice:5000]",
+      "default/checkoutservice -> default/emailservice:8080  [env:EMAIL_SERVICE_ADDR=emailservice:8080]",
       "default/checkoutservice -> default/paymentservice:50051  [env:PAYMENT_SERVICE_ADDR=paymentservice:50051]",
       "default/checkoutservice -> default/productcatalogservice:3550  [env:PRODUCT_CATALOG_SERVICE_ADDR=productcatalogservice:3550]",
       "default/checkoutservice -> default/shippingservice:50051  [env:SHIPPING_SERVICE_ADDR=shippingservice:50051]",
@@ -31,7 +31,7 @@
       "default/frontend -> default/productcatalogservice:3550  [env:PRODUCT_CATALOG_SERVICE_ADDR=productcatalogservice:3550]",
       "default/frontend -> default/recommendationservice:8080  [env:RECOMMENDATION_SERVICE_ADDR=recommendationservice:8080]",
       "default/frontend -> default/shippingservice:50051  [env:SHIPPING_SERVICE_ADDR=shippingservice:50051]",
-      "default/loadgenerator -> default/frontend:80  [env:FRONTEND_ADDR=frontend:80]",
+      "default/loadgenerator -> default/frontend:8080  [env:FRONTEND_ADDR=frontend:8080]",
       "default/recommendationservice -> default/productcatalogservice:3550  [env:PRODUCT_CATALOG_SERVICE_ADDR=productcatalogservice:3550]"
     ],
     "app": "Online Boutique",
@@ -200,41 +200,39 @@
     "workloads": 2,
     "services": 2,
     "netpols": 1,
-    "needed": 5,
+    "needed": 4,
     "by_source": {
-      "s1_env": 1,
+      "s1_env": 0,
       "s3_ingress": 0,
       "s4_dns": 2,
       "s5_apiserver": 0,
       "s6_peer": 2
     },
-    "real_dependency_edges": 3,
+    "real_dependency_edges": 2,
     "would_break": 0,
     "over_priv": 1,
     "out_of_scope": 2,
-    "gate": "enforce",
-    "s1_edges": [
-      "default/mg-mongodb-arbiter -> default/mg-mongodb:27017  [env:MONGODB_INITIAL_PRIMARY_HOST=mg-mongodb-0.mg-mongodb-headless:27017]"
-    ],
+    "gate": "audit",
+    "s1_edges": [],
     "app": "MongoDB (replicaset)",
     "stress": "StatefulSet replicaset",
     "error": null
   },
   {
     "workloads": 2,
-    "services": 3,
+    "services": 2,
     "netpols": 2,
-    "needed": 4,
+    "needed": 3,
     "by_source": {
       "s1_env": 1,
       "s3_ingress": 0,
       "s4_dns": 2,
       "s5_apiserver": 0,
-      "s6_peer": 1
+      "s6_peer": 0
     },
-    "real_dependency_edges": 2,
+    "real_dependency_edges": 1,
     "would_break": 0,
-    "over_priv": 4,
+    "over_priv": 5,
     "out_of_scope": 2,
     "gate": "enforce",
     "s1_edges": [
@@ -246,19 +244,19 @@
   },
   {
     "workloads": 2,
-    "services": 3,
+    "services": 2,
     "netpols": 2,
-    "needed": 5,
+    "needed": 4,
     "by_source": {
       "s1_env": 1,
       "s3_ingress": 1,
       "s4_dns": 2,
       "s5_apiserver": 0,
-      "s6_peer": 1
+      "s6_peer": 0
     },
-    "real_dependency_edges": 3,
+    "real_dependency_edges": 2,
     "would_break": 0,
-    "over_priv": 4,
+    "over_priv": 5,
     "out_of_scope": 3,
     "gate": "enforce",
     "s1_edges": [
@@ -311,7 +309,7 @@
     "gate": "audit",
     "s1_edges": [],
     "app": "kube-prometheus-stack",
-    "stress": "large mixed stack (134 objs)",
+    "stress": "large mixed stack (139 objs)",
     "error": null
   }
 ]

@@ -24,9 +24,11 @@ Examples of unacceptable behaviour:
 
 ## Enforcement
 
-Instances of abusive or unacceptable behaviour may be reported to the maintainers via
-a private channel (see `SECURITY.md` for how to reach them privately). All complaints
-will be reviewed and investigated promptly and fairly.
+Instances of abusive or unacceptable behaviour may be reported privately to the
+maintainer, [@shivaswaroop40](https://github.com/shivaswaroop40) (open a direct
+contact via the GitHub profile). For security vulnerabilities specifically, use the
+private channel in `SECURITY.md`. All complaints will be reviewed and investigated
+promptly and fairly.
 
 This Code of Conduct is adapted from the [Contributor Covenant][cc], version 2.1.
 

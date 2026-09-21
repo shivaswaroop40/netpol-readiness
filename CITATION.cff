@@ -12,9 +12,8 @@ type: software
 authors:
   - family-names: "Nittoor Krishnamurthy"
     given-names: "Shivaswaroop"
-    # affiliation and orcid: fill in before release if desired
     affiliation: "KTH Royal Institute of Technology"
-version: "0.1.0"
+version: "0.2.1"
 license: Apache-2.0
 keywords:
   - kubernetes

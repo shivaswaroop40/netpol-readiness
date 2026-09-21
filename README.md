@@ -1,5 +1,9 @@
 # npready — Kubernetes NetworkPolicy enforcement-readiness
 
+[![CI](https://github.com/shivaswaroop40/netpol-readiness/actions/workflows/ci.yml/badge.svg)](https://github.com/shivaswaroop40/netpol-readiness/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.9%2B-blue.svg)](pyproject.toml)
+
 **Is this generated network policy safe to turn on?**
 
 Existing tools tell you a policy is *loose* (over-privilege scanners) or that a CNI
@@ -58,25 +62,33 @@ npready readiness --manifests ./deploy/
 ```
 
 ```
+==========================================================================
 ENFORCEMENT READINESS — shop
+==========================================================================
   correct (admitted & needed) : 12
-  unused  (admitted, unneeded): 4    over-privilege — safe to remove
-  missing (needed, unadmitted): 2    WOULD BREAK ON ENFORCE
-  out-of-scope (egress/DNS/api): 6   need egress policy / cluster-infra
-  workloads protected         : 9/11
-  readiness score : 0.86
+  unused  (admitted, unneeded): 4   over-privilege — safe to remove
+  missing (protected & unadmitted): 2   WOULD BREAK ON ENFORCE
+  unprotected (default-allow deps): 3   flow today; write policy to segment
+  out-of-scope (egress/DNS/api)   : 6   need egress policy / cluster-infra
+  workloads protected            : 9/11
+--------------------------------------------------------------------------
+  readiness score : 0.86   (fraction of needs admitted)
   GATE            : SHADOW
-  2 declared dependency edge(s) are not admitted by any policy; enforcing now
-  would deny legitimate traffic. Add them, then re-check.
+  2 declared dependency edge(s) reach a policy-protected destination but are
+  not admitted; enforcing now would deny them. Fix, re-check.
 
   WOULD BREAK ON ENFORCE (fix these first):
-    shop/orders-api -> shop/orders-cache :6379  [s1_env]  REDIS_ADDR=orders-cache:6379
-    ingress-controller -> shop/storefront :80   [s3_ingress] ingress/shop-ingress
+    shop/orders-api -> shop/orders-cache :6379  [s1_env] env:REDIS_ADDR=orders-cache:6379
+    shop/orders-api -> shop/orders-db    :5432  [s1_env] env:POSTGRES_HOST=orders-db:5432
 ```
 
-(DNS and apiserver dependencies are reported under *out-of-scope* — they need an
-egress policy or are cluster-infra, so they are not counted as would-break-on-enforce
-for an ingress policy.)
+The two axes that matter are split deliberately: **`missing`** is a declared
+dependency whose destination *is* policy-protected but unadmitted — enforcing breaks
+it (this drives the SHADOW gate). **`unprotected`** is a declared dependency to a
+default-allow destination — it flows today, so it is an AUDIT concern, not a break.
+DNS and apiserver dependencies are reported under **out-of-scope**: they need an
+egress policy or are cluster-infra, so an ingress policy can't express them and they
+are never counted as would-break.
 
 `readiness` exits non-zero when the gate is `shadow`, so you can wire it into CI to
 block a merge that would break on enforce.
@@ -111,22 +123,59 @@ npready score --admitted policy_edges.json --legit L.json --attacks A.json --obs
 { "block_rate": 1.0, "over_privilege": 0.0, "false_deny": 0.26 }
 ```
 
+Add `--granularity pair` to compare at `(src, dst)` instead of `(src, dst, port)` —
+the coarser view where an SSRF to `:80` and a legitimate call to `:443` on the same
+pair collapse together (useful for cross-tool comparison, but it hides over-privilege).
+
+### 5. Which source should I trust — config, observation, or both?
+
+`fuse` scores the config-derived edges, an observed edge set, and their **union**
+against the same ground truth, so you can see what each source covers and confirm the
+union costs nothing on the security axis:
+
+```bash
+# --observed is an edge set from any traffic observer (flow logs, Hubble, Otterize, …)
+npready fuse --manifests ./deploy/ --observed O.json --legit L.json --attacks A.json
+```
+
+```
+COVERAGE BY SOURCE  (granularity (src,dst,port))
+  config alone  : 89.7% covered   (over-priv 0.0%)
+  observed      : 70.1% covered   (over-priv 0.0%)
+  FUSED (union) : 89.7% covered   (over-priv 0.0%)
+  security      : SAFE — config declares no attack edge; fusion adds no over-privilege
+```
+
+The measured result across real applications: **neither source is safe to rely on
+alone, and which one wins is not knowable in advance.** On an app that declares its
+dependencies (env/Ingress/headless peers) config reaches edges no benign observation
+window fires; on one that hard-codes them, observation is the only source. The union
+*equals* the better source rather than beating it — which is exactly why you take both.
+It is safe by construction: config-declared edges name no attack path, so
+`declared ∩ attacks = ∅` at port granularity (checked, not assumed).
+
 ## How the readiness analysis works
 
-`needed` edges come from six independent, auditable sources — every edge records the
-literal config that justified it:
+`needed` edges come from five independent, auditable sources — every edge records the
+literal config that justified it (S2, the Service catalog, is the resolver the others
+verify against, not a separate emitter):
 
 | source | signal | example |
 |---|---|---|
-| S1 | workload env endpoints | `REDIS_ADDR=cache:6379` → app → cache:6379 |
+| S1 | workload config endpoints (env, ConfigMap, argv) | `REDIS_ADDR=cache:6379` → app → cache:6379 |
 | S3 | Ingress / Gateway routes | ingress backend → service → workload |
 | S4 | cluster DNS invariant | every pod → kube-dns:53 (the classic silent break) |
 | S5 | RBAC bindings | bound ServiceAccount → kube-apiserver:443 |
 | S6 | headless Service peers | StatefulSet replicas ↔ each other |
 
-`admitted` edges come from expanding every `networking.k8s.io/v1` NetworkPolicy.
-Reconciliation is set arithmetic at `(src, dst, port)` granularity — admitting
-`a→b:443` does **not** silently satisfy a need for `a→b:5432`.
+Ports are resolved to the **pod-side port** (a Service's `targetPort`), because that
+is what a NetworkPolicy governs — a policy written for the real container port is the
+correct one, even when the Service remaps it.
+
+`admitted` edges come from expanding every `networking.k8s.io/v1` NetworkPolicy
+(named ports and `endPort` ranges included). Reconciliation is set arithmetic at
+`(src, dst, port)` granularity — admitting `a→b:443` does **not** silently satisfy a
+need for `a→b:5432`.
 
 ## Status
 

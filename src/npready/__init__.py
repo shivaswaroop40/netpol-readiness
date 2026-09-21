@@ -14,7 +14,7 @@ from .policy import derive_admitted
 from .reconcile import Gate, ReadinessVerdict, reconcile, verdict
 from .score import decompose_false_deny, score
 
-__version__ = "0.1.0"
+__version__ = "0.3.0"
 __all__ = [
     "Edge",
     "EdgeClass",

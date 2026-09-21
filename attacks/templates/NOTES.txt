@@ -19,7 +19,11 @@ Interpretation:
 Clean up (Jobs auto-delete via ttlSecondsAfterFinished; to remove now):
 
   helm uninstall {{ .Release.Name }} -n {{ .Values.namespace.name }}
+{{- if .Values.namespace.create }}
   kubectl delete namespace {{ .Values.namespace.name }}
+{{- else }}
+  # (namespace {{ .Values.namespace.name }} was not created by this chart — left intact)
+{{- end }}
 
 SAFETY: these are benign probes (connect + report), not exploits. Run only against
 clusters you are authorised to test. See THREAT_MODEL.md.

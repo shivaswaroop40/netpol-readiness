@@ -62,9 +62,9 @@ config-derived dependency, and an attack are all directly comparable.
 |---|---|
 | `model.py` | `Edge`, `EdgeClass`, `Provenance`, `Quadrant`, `ReconcileResult` |
 | `inventory.py` | load + normalise cluster inputs (3 sources); label-selector eval |
-| `graph.py` | `derive_needed` — the six config-derivation sources |
+| `graph.py` | `derive_needed` — the five config-derivation emitters (S1, S3–S6; S2 is the Service-catalog resolver) |
 | `policy.py` | `derive_admitted` — expand NetworkPolicy objects to edges |
 | `reconcile.py` | quadrants + `verdict` (audit/shadow/enforce gate) |
-| `score.py` | generator evaluation metrics + false-deny decomposition |
+| `score.py` | generator evaluation metrics, false-deny decomposition, and fusion (coverage by source) |
 | `attacks.py` | the ATT&CK-mapped roster metadata (Helm chart deploys it) |
-| `cli.py` | `derive` / `readiness` / `score` / `attacks` |
+| `cli.py` | `derive` / `readiness` / `score` / `fuse` / `attacks` |

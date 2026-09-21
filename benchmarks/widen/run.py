@@ -34,7 +34,7 @@ CORPUS = [
     ("wordpress.yaml", "WordPress", "env-based DB endpoint"),
     ("wordpress-ingress.yaml", "WordPress+Ingress", "Ingress route (S3)"),
     ("ghost.yaml", "Ghost+Ingress", "Ingress route (S3)"),
-    ("kube-prometheus.yaml", "kube-prometheus-stack", "large mixed stack (134 objs)"),
+    ("kube-prometheus.yaml", "kube-prometheus-stack", "large mixed stack (139 objs)"),
 ]
 
 SOURCES = [Provenance.S1_ENV_ENDPOINT, Provenance.S3_INGRESS, Provenance.S4_DNS,

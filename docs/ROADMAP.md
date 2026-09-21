@@ -3,10 +3,13 @@
 Honest view of what is built, what is partial, and what a credible OSS v1.0 needs.
 Ordered by value-to-effort.
 
-## Built (v0.1)
-- Config derivation S1/S3/S4/S5/S6 with provenance.
+## Built (v0.2)
+- Config derivation S1/S3/S4/S5/S6 with provenance; ports resolved to pod `targetPort`.
 - Four-quadrant reconciliation + audit/shadow/enforce gate.
 - Scoring + false-deny decomposition.
+- **Fusion + coverage-by-source** (`npready fuse`): config vs observation vs their
+  union against an observation-independent ground truth, with the `declared ∩ A = ∅`
+  safety invariant checked (port granularity) and a `--granularity pair` view.
 - Attack roster Helm chart (fail-closed probes).
 - Tests + offline analysis + CI.
 
@@ -17,8 +20,17 @@ The whole point is to remove hand-authored per-app edge sets. S1 covers twelve-f
 apps; apps that hard-code service names (e.g. Sock Shop) need fallbacks:
 - S2 full Service-catalog resolution (any workload that mounts/references a Service).
 - Static analysis of common client libraries / config maps for endpoints.
-- Optional: seed from a short observation window and *union* with config (the thesis
-  result: fusion beats either source alone).
+- **S7 — mounted config graphs (guarded).** Some apps declare their dependency graph
+  in a mounted file (e.g. DeathStarBench social-network ships an all-to-all service
+  map as JSON). Parsing it naively *over-declares* — it lists every service to every
+  service — so this needs a whitelist-aware parser that keeps only edges corroborated
+  by another surface, not a blind ingest. Measured boundary, not a guess (thesis C7).
+
+The fusion primitive itself is now built (`npready fuse`); what remains is producing
+the observed edge set automatically (an observer adapter, below) so fusion runs
+end-to-end without a hand-supplied `--observed` file. The measured result is that the
+union **equals the better source** and never beats it — its value is that which source
+wins is not knowable in advance, so relying on either alone is unsafe.
 
 ### Package completeness — ~2 weeks
 - **Ship the attack Helm chart inside the pip package.** Today the chart lives at

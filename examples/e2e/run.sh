@@ -6,6 +6,8 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 NS=npready-demo
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
 fail() { echo "E2E FAIL: $*" >&2; exit 1; }
 
 echo "== 1. deploy demo workloads =="
@@ -14,9 +16,8 @@ kubectl -n "$NS" rollout status deploy/cache --timeout=120s
 kubectl -n "$NS" rollout status deploy/client --timeout=120s
 
 echo "== 2. npready readiness BEFORE policy: must flag client->cache as missing/would-break =="
-# Dump the demo as a snapshot npready can read, then analyse offline.
 npready readiness --context "$(kubectl config current-context)" --namespace "$NS" || true
-BEFORE=$(npready readiness --context "$(kubectl config current-context)" --namespace "$NS" --json /tmp/before.json; cat /tmp/before.json)
+BEFORE=$(npready readiness --context "$(kubectl config current-context)" --namespace "$NS" --json "$WORK/before.json"; cat "$WORK/before.json")
 echo "$BEFORE" | grep -q '"gate": "audit"\|"gate": "shadow"' || fail "expected audit/shadow before any policy"
 
 echo "== 3. apply default-deny + the one declared allow edge =="
