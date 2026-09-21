@@ -1,0 +1,5 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+networking:
+  disableDefaultCNI: true      # kindnet does not enforce NetworkPolicy; use Calico
+  podSubnet: "192.168.0.0/16"  # Calico's default

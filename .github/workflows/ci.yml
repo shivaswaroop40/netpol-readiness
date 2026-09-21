@@ -73,10 +73,17 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: helm/kind-action@0025e74a8c7512023d06dc019c617aa3cf561fde # v1.10.0
         with:
-          # kind's default CNI (kindnet) enforces NetworkPolicy on recent versions;
-          # the e2e run relies on that. Ingress-source and egress edges are reported
-          # out-of-scope by npready, so no extra CNI is installed here.
+          # kind's default CNI (kindnet) does NOT enforce NetworkPolicy, so the
+          # default CNI is disabled and Calico is installed below. Without an
+          # enforcing CNI the readiness e2e would report every edge OPEN.
           cluster_name: npready-e2e
+          config: .github/kind-calico.yaml
+      - name: Install Calico and wait for NetworkPolicy enforcement
+        run: |
+          kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.28.2/manifests/calico.yaml
+          kubectl -n kube-system rollout status ds/calico-node --timeout=180s
+          kubectl -n kube-system rollout status deploy/calico-kube-controllers --timeout=180s
+          kubectl wait --for=condition=Ready nodes --all --timeout=120s
       - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with: { python-version: "3.13" }
       - name: Install npready
