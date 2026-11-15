@@ -31,7 +31,7 @@ Key = tuple            # (src, dst, port|None)
 def _as_key(e) -> Key:
     """Accept an Edge, a 3-tuple, or a 2-tuple; normalise to (src, dst, port)."""
     if hasattr(e, "src"):
-        return (e.src, e.dst, getattr(e, "port", None))
+        return (e.src, e.dst, e.port)
     if len(e) == 3:
         return (e[0], e[1], e[2])
     return (e[0], e[1], None)
@@ -47,6 +47,10 @@ def fmt_port(p) -> str:
     if isinstance(p, tuple):
         return f"{p[0]}-{p[1]}"
     return str(p)
+
+
+def _fmt_edges(keys) -> list:
+    return sorted(f"{s}->{d}:{fmt_port(p)}" for s, d, p in keys)
 
 
 def admits(target: Key, admit: set, *, target_is_need: bool = False) -> bool:
@@ -86,12 +90,7 @@ def admits(target: Key, admit: set, *, target_is_need: bool = False) -> bool:
             elif isinstance(ap, tuple) and ap[0] <= p <= ap[1]:
                 return True
         return False
-    if not target_is_need:
-        return any(a[0] == s and a[1] == d for a in admit)   # optimistic (attacks only)
-    return False
-
-
-_admits = admits                        # internal alias (back-compat within module)
+    return not target_is_need and any(a[0] == s and a[1] == d for a in admit)
 
 
 def score(admitted: Iterable, L: Iterable, A: Iterable,
@@ -106,8 +105,8 @@ def score(admitted: Iterable, L: Iterable, A: Iterable,
     Lk = _keyset(L)
     Ak = _keyset(A)
 
-    admitted_attacks = [a for a in Ak if _admits(a, admit)]                       # attack: optimistic
-    missed_legit = [x for x in Lk if not _admits(x, admit, target_is_need=True)]  # need: conservative
+    admitted_attacks = [a for a in Ak if admits(a, admit)]
+    missed_legit = [x for x in Lk if not admits(x, admit, target_is_need=True)]
 
     over_priv = len(admitted_attacks) / len(Ak) if Ak else 0.0
     false_deny = len(missed_legit) / len(Lk) if Lk else 0.0
@@ -117,12 +116,12 @@ def score(admitted: Iterable, L: Iterable, A: Iterable,
         "block_rate": round(1.0 - over_priv, 6),
         "over_privilege": round(over_priv, 6),
         "false_deny": round(false_deny, 6),
-        "admitted_attacks": sorted(f"{s}->{d}:{fmt_port(p)}" for s, d, p in admitted_attacks),
-        "missed_legit": sorted(f"{s}->{d}:{fmt_port(p)}" for s, d, p in missed_legit),
+        "admitted_attacks": _fmt_edges(admitted_attacks),
+        "missed_legit": _fmt_edges(missed_legit),
     }
     if L_inscope is not None:
         Lin = _keyset(L_inscope)
-        missed_in = [x for x in Lin if not _admits(x, admit, target_is_need=True)]
+        missed_in = [x for x in Lin if not admits(x, admit, target_is_need=True)]
         out["false_deny_inscope"] = round(len(missed_in) / len(Lin), 6) if Lin else 0.0
     return out
 
@@ -157,7 +156,7 @@ def fuse(declared: Iterable, observed: Iterable, L: Iterable, A: Iterable) -> di
     observed_s = score(ok, L, A)
     fused_s = score(fused, L, A)
 
-    declared_attacks = sorted(f"{s}->{d}:{fmt_port(p)}" for (s, d, p) in (dk & Ak))
+    declared_attacks = _fmt_edges(dk & Ak)
     return {
         "config_only": config_only,
         "observed": observed_s,
@@ -195,16 +194,15 @@ def decompose_false_deny(admitted: Iterable, L: Iterable, observed: Iterable) ->
     Lk = _keyset(L)
     Ok = _keyset(observed)
 
-    denied = [x for x in Lk if not _admits(x, admit, target_is_need=True)]
-    never_observed = [x for x in denied if not _admits(x, Ok, target_is_need=True)]
-    observed_but_denied = [x for x in denied if _admits(x, Ok, target_is_need=True)]
+    denied = [x for x in Lk if not admits(x, admit, target_is_need=True)]
+    never_observed = [x for x in denied if not admits(x, Ok, target_is_need=True)]
+    observed_but_denied = [x for x in denied if admits(x, Ok, target_is_need=True)]
 
     n = len(Lk) or 1
     return {
         "false_deny": round(len(denied) / n, 6),
         "coverage_component": round(len(never_observed) / n, 6),
         "tool_penalty": round(len(observed_but_denied) / n, 6),
-        "never_observed": sorted(f"{s}->{d}:{fmt_port(p)}" for s, d, p in never_observed),
-        "observed_but_denied": sorted(f"{s}->{d}:{fmt_port(p)}"
-                                      for s, d, p in observed_but_denied),
+        "never_observed": _fmt_edges(never_observed),
+        "observed_but_denied": _fmt_edges(observed_but_denied),
     }

@@ -15,10 +15,9 @@ kubectl apply -f "$HERE/demo.yaml"
 kubectl -n "$NS" rollout status deploy/cache --timeout=120s
 kubectl -n "$NS" rollout status deploy/client --timeout=120s
 
-echo "== 2. npready readiness BEFORE policy: must flag client->cache as missing/would-break =="
-npready readiness --context "$(kubectl config current-context)" --namespace "$NS" || true
-BEFORE=$(npready readiness --context "$(kubectl config current-context)" --namespace "$NS" --json "$WORK/before.json"; cat "$WORK/before.json")
-echo "$BEFORE" | grep -q '"gate": "audit"\|"gate": "shadow"' || fail "expected audit/shadow before any policy"
+echo "== 2. npready readiness BEFORE policy: client->cache is unsegmented, so the gate must not be enforce =="
+npready readiness --context "$(kubectl config current-context)" --namespace "$NS" --json "$WORK/before.json" || true
+grep -q '"gate": "audit"\|"gate": "shadow"' "$WORK/before.json" || fail "expected audit/shadow before any policy"
 
 echo "== 3. apply default-deny + the one declared allow edge =="
 kubectl apply -f "$HERE/policies.yaml"
@@ -32,7 +31,7 @@ echo "   client->cache OPEN (correct)"
 echo "== 5. attack probe (compromised identity) must be BLOCKED reaching cache =="
 helm install npready-attacks "$ROOT/attacks" -n "$NS" \
   --set namespace.create=false \
-  --set namespace.name=npready-demo \
+  --set namespace.name="$NS" \
   --set 'families[0].id=03-lateral-movement' \
   --set 'families[0].enabled=true' \
   --set 'families[0].kind=tcp' \
@@ -41,7 +40,6 @@ helm install npready-attacks "$ROOT/attacks" -n "$NS" \
   --set 'families[0].expect=blocked' \
   --set 'families[0].targets[0].host=cache' \
   --set 'families[0].targets[0].port=6379'
-# wait for the probe Job to finish
 kubectl -n "$NS" wait --for=condition=complete job/probe-03-lateral-movement --timeout=90s || true
 RESULT=$(kubectl -n "$NS" logs -l npready.dev/family=03-lateral-movement --tail=-1 | grep RESULT || true)
 echo "   $RESULT"

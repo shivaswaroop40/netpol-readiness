@@ -13,26 +13,31 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+from collections import Counter
 
 from . import __version__
+from .attacks import OWASP_K8S, ROSTER
 from .graph import derive_needed
 from .inventory import Inventory
 from .policy import derive_admitted
-from .reconcile import reconcile, verdict
+from .reconcile import Gate, reconcile, verdict
 from .score import decompose_false_deny, fmt_port, fuse, score
+
+GRANULARITY_LABEL = {"port": "(src,dst,port)", "pair": "(src,dst)"}
 
 
 def _load_inventory(args) -> Inventory:
-    if args.manifests or args.snapshot:
-        if args.manifests:
-            inv = Inventory.from_manifests(args.manifests)
-        else:
-            inv = Inventory.from_dict(json.load(open(args.snapshot)))
-        # offline sources are loaded whole; honour --namespace by filtering,
-        # so the scope printed on the report is the scope actually analysed.
-        return inv.restrict(args.namespace) if args.namespace else inv
-    return Inventory.from_cluster(context=args.context, namespace=args.namespace)
+    if args.manifests:
+        inv = Inventory.from_manifests(args.manifests)
+    elif args.snapshot:
+        inv = Inventory.from_dict(json.load(open(args.snapshot)))
+    else:
+        return Inventory.from_cluster(context=args.context, namespace=args.namespace)
+    # offline sources are loaded whole; honour --namespace by filtering,
+    # so the scope printed on the report is the scope actually analysed.
+    return inv.restrict(args.namespace) if args.namespace else inv
 
 
 def _p(port) -> str:
@@ -62,13 +67,16 @@ def _add_source_args(p):
     p.add_argument("--json", metavar="FILE", help="also write machine-readable JSON here")
 
 
+def _add_granularity_arg(p):
+    p.add_argument("--granularity", choices=["port", "pair"], default="port",
+                   help="score on (src,dst,port) [default] or the coarser (src,dst) pair")
+
+
 # ------------------------------------------------------------------ derive
 def cmd_derive(args):
     inv = _load_inventory(args)
     needed = derive_needed(inv)
-    by_prov = {}
-    for e in needed:
-        by_prov[e.provenance.value] = by_prov.get(e.provenance.value, 0) + 1
+    by_prov = Counter(e.provenance.value for e in needed)
     print(f"config-derived NEEDED graph: {len(needed)} edges "
           f"from {len(inv.workloads)} workloads, {len(inv.services)} services")
     for k, v in sorted(by_prov.items()):
@@ -76,7 +84,7 @@ def cmd_derive(args):
     for e in sorted(needed, key=lambda x: (x.src, x.dst))[:args.limit]:
         print(f"    {e.src:38} -> {e.dst:28} :{_p(e.port):<6} [{e.provenance.value}] {e.evidence}")
     if args.json:
-        json.dump({"needed": [_ed(e) for e in needed]}, open(args.json, "w"), indent=2)
+        json.dump({"needed": [e.to_dict() for e in needed]}, open(args.json, "w"), indent=2)
         print(f"wrote {args.json}")
     return 0
 
@@ -114,7 +122,7 @@ def cmd_readiness(args):
     if args.json:
         json.dump(v.to_dict(), open(args.json, "w"), indent=2)
         print(f"\nwrote {args.json}")
-    return 2 if v.gate == "shadow" else 0             # non-zero exit if unsafe to enforce
+    return 2 if v.gate == Gate.SHADOW else 0          # non-zero exit if unsafe to enforce
 
 
 # ------------------------------------------------------------------ score
@@ -124,7 +132,7 @@ def cmd_score(args):
     L = _project(_edges(args.legit), g)
     A = _project(_edges(args.attacks), g)
     result = score(admitted, L, A)
-    result["granularity"] = "(src,dst,port)" if g == "port" else "(src,dst)"
+    result["granularity"] = GRANULARITY_LABEL[g]
     print(json.dumps(result, indent=2))
     if args.observed:
         dec = decompose_false_deny(admitted, L, _project(_edges(args.observed), g))
@@ -148,13 +156,13 @@ def cmd_fuse(args):
         src = f"declared file {args.declared}"
     else:
         needed = derive_needed(_load_inventory(args))
-        declared = _project([(e.src, e.dst, e.port) for e in needed], g)
+        declared = _project([e.key() for e in needed], g)
         src = "config-derived (npready derive)"
 
     res = fuse(declared, observed, L, A)
     cov = res["coverage"]
     print("=" * 66)
-    print(f"COVERAGE BY SOURCE  (granularity {'(src,dst,port)' if g == 'port' else '(src,dst)'})")
+    print(f"COVERAGE BY SOURCE  (granularity {GRANULARITY_LABEL[g]})")
     print("=" * 66)
     print(f"  legit edges L = {len(set(L))}   attack edges A = {len(set(A))}")
     print(f"  declared from : {src}")
@@ -167,11 +175,11 @@ def cmd_fuse(args):
           f"(over-priv {res['fused']['over_privilege']:.1%})")
     print("-" * 66)
     print(f"  fusion gain over observed : {res['fused_coverage_gain_over_observed']:+.1%} coverage")
-    inv = res["declared_intersect_attacks"]
+    clash = res["declared_intersect_attacks"]
     verdict_txt = ("SAFE — config declares no attack edge; fusion adds no over-privilege"
-                   if inv["safe"]
-                   else f"COLLISION — {inv['count']} declared edge(s) coincide with an attack: "
-                        f"{', '.join(inv['edges'])}")
+                   if clash["safe"]
+                   else f"COLLISION — {clash['count']} declared edge(s) coincide with an attack: "
+                        f"{', '.join(clash['edges'])}")
     print(f"  security      : {verdict_txt}")
     if args.json:
         json.dump(res, open(args.json, "w"), indent=2)
@@ -185,7 +193,6 @@ def _find_chart() -> str:
     ``attacks/``), so it's available for a git checkout / editable install but NOT
     inside a plain ``pip install`` wheel — see docs/ROADMAP.md. Return a real path if
     found, else "" so the caller prints an accurate instruction."""
-    import os
     here = os.path.dirname(os.path.abspath(__file__))
     for cand in (os.path.join(here, "..", "..", "attacks"),   # editable install / repo
                  os.path.join(os.getcwd(), "attacks")):        # run from repo root
@@ -196,7 +203,6 @@ def _find_chart() -> str:
 
 
 def cmd_attacks(args):
-    from .attacks import OWASP_K8S, ROSTER
     print("ATT&CK-mapped network-reachability attack roster")
     print(f"addresses OWASP K8s: {OWASP_K8S['2025']} (2022: {OWASP_K8S['2022'].split(' ',1)[0]})")
     chart = _find_chart()
@@ -239,8 +245,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--legit", required=True, help="JSON list of legitimate edges L")
     s.add_argument("--attacks", required=True, help="JSON list of attack edges A")
     s.add_argument("--observed", help="JSON list of observed edges O (enables decomposition)")
-    s.add_argument("--granularity", choices=["port", "pair"], default="port",
-                   help="score on (src,dst,port) [default] or the coarser (src,dst) pair")
+    _add_granularity_arg(s)
     s.add_argument("--json", metavar="FILE")
     s.set_defaults(func=cmd_score)
 
@@ -251,8 +256,7 @@ def build_parser() -> argparse.ArgumentParser:
     fz.add_argument("--observed", required=True, help="JSON list of observed edges O")
     fz.add_argument("--legit", required=True, help="JSON list of legitimate edges L (ground truth)")
     fz.add_argument("--attacks", required=True, help="JSON list of attack edges A")
-    fz.add_argument("--granularity", choices=["port", "pair"], default="port",
-                    help="score on (src,dst,port) [default] or the coarser (src,dst) pair")
+    _add_granularity_arg(fz)
     fz.set_defaults(func=cmd_fuse)
 
     a = sub.add_parser("attacks", help="print the ATT&CK-mapped attack roster")
@@ -268,12 +272,6 @@ def main(argv=None) -> int:
     except FileNotFoundError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
-
-
-def _ed(e) -> dict:
-    return {"src": e.src, "dst": e.dst, "port": e.port,
-            "class": e.edge_class.value, "provenance": e.provenance.value,
-            "evidence": e.evidence}
 
 
 if __name__ == "__main__":

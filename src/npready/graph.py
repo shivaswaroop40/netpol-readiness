@@ -56,7 +56,7 @@ SCHEME_PORTS = {
 }
 # From the remaining "host[:port][/path]" (or "user:pass@host:port"), take host+port.
 HOST_RE = re.compile(r"^(?:[^@/]*@)?([a-z0-9][a-z0-9.\-]*[a-z0-9])(?::(\d+))?")
-# A hostname with a dot that is NOT a cluster-internal suffix looks like egress.
+# Stripped before resolving, so "svc.ns.svc.cluster.local" resolves like "svc.ns".
 CLUSTER_SUFFIX = ".svc.cluster.local"
 
 
@@ -84,7 +84,7 @@ def _parse_endpoint(val: str):
     m = HOST_RE.match(v)
     if not m:
         return None, None
-    port = int(m.group(2)) if m.group(2) and m.group(2).isdigit() else None
+    port = int(m.group(2)) if m.group(2) else None
     if port is None and scheme:
         port = SCHEME_PORTS.get(scheme)
     return m.group(1), port
@@ -100,11 +100,7 @@ def _resolve_host(host: str, caller: Workload, svc_index: dict) -> Optional[Serv
       ``pod-0.svc`` / ``pod-0.svc.ns`` StatefulSet pod-qualified (headless), where the
                                        FIRST label is a pod, not the Service
     """
-    host = host.strip().lower()
-    host = host.removesuffix(CLUSTER_SUFFIX)
-    parts = [p for p in host.split(".") if p]
-    if not parts:
-        return None
+    parts = [p for p in host.removesuffix(CLUSTER_SUFFIX).split(".") if p]
     # try each label as the Service name, with the next label as its namespace.
     # this covers svc, svc.ns and pod-0.svc / pod-0.svc.ns without special-casing.
     for i, label in enumerate(parts):
@@ -116,11 +112,8 @@ def _resolve_host(host: str, caller: Workload, svc_index: dict) -> Optional[Serv
 
 
 def _looks_external(host: str) -> bool:
-    h = host.strip().lower()
-    if h.endswith(CLUSTER_SUFFIX):
-        return False
-    # a public-looking FQDN (has a dot and a TLD-ish tail) with no cluster suffix
-    return "." in h and not h.replace(".", "").isdigit() and not h.endswith(".local")
+    """A public-looking FQDN: dotted, not an IPv4 literal, not a ``.local`` name."""
+    return "." in host and not host.replace(".", "").isdigit() and not host.endswith(".local")
 
 
 def _safe_evidence(name: str, host: str, port) -> str:
@@ -145,7 +138,7 @@ def _candidates(val: str) -> list:
     is covered without knowing the flag vocabulary.
     """
     out = []
-    for token in TOKEN_SPLIT_RE.split(val or ""):
+    for token in TOKEN_SPLIT_RE.split(val):
         if not token or len(token) > 253:
             continue
         out.append(token)
@@ -165,7 +158,7 @@ def _config_surfaces(w: Workload, configmaps: dict) -> list:
     """
     out = [("env", k, v) for k, v in w.env]
     for cm in sorted(w.configmap_refs):
-        for k, v in (configmaps.get((w.ns, cm)) or {}).items():
+        for k, v in configmaps.get((w.ns, cm), {}).items():
             out.append((f"configmap/{cm}", k, str(v)))
     if w.argv:
         out.append(("argv", "command", w.argv))
@@ -181,10 +174,9 @@ def s1_env_endpoints(inv: Inventory, svc_index: dict) -> list:
     to nothing and is silently ignored, while ``mongo=user-db:27017`` resolves to the
     real ``user-db`` Service and becomes an edge — despite the variable's name.
     """
-    configmaps = getattr(inv, "configmaps", {}) or {}
     edges = []
     for w in inv.workloads:
-        for origin, key, val in _config_surfaces(w, configmaps):
+        for origin, key, val in _config_surfaces(w, inv.configmaps):
             named_like_endpoint = bool(ENDPOINT_RE.search(key))
             for token in _candidates(val):
                 host, p = _parse_endpoint(token)
@@ -269,16 +261,15 @@ def s5_apiserver(inv: Inventory) -> list:
 # ---------------------------------------------------------------- S6
 def s6_peers(inv: Inventory) -> list:
     """Pods behind a headless Service peer with each other (StatefulSet clustering:
-    etcd, postgres replicas, NATS). These intra-set edges are invisible to an
-    ingress-only observer that only sees client traffic.
+    etcd, kafka, rabbitmq, postgres replicas). These intra-set edges are invisible to
+    an ingress-only observer that only sees client traffic.
 
-    A StatefulSet's pods peer with each other (etcd, kafka, rabbitmq, postgres
-    replicas). At workload-identity granularity that intra-set peering is a SELF-edge
-    ``X -> X`` on the cluster port — which a NetworkPolicy expresses as "podSelector X,
-    ingress from podSelector X". So for a StatefulSet behind a headless Service we emit
-    that self-edge (it is real and checkable), and for multiple distinct workloads
-    behind one headless Service we emit the cross edges too. A *non*-StatefulSet
-    self-loop is not a clustering relationship and is skipped."""
+    At workload-identity granularity intra-set peering is a SELF-edge ``X -> X`` on
+    the cluster port, which a NetworkPolicy expresses as "podSelector X, ingress from
+    podSelector X". So for a StatefulSet behind a headless Service we emit that
+    self-edge, and for several distinct workloads behind one headless Service we emit
+    the cross edges too. A *non*-StatefulSet self-loop is not a clustering
+    relationship and is skipped."""
     edges = []
     for svc in inv.services:
         if svc.kind != "Headless":
@@ -290,7 +281,7 @@ def s6_peers(inv: Inventory) -> list:
         for a in peers:
             for b in peers:
                 if a.id == b.id and a.kind != "statefulset":
-                    continue                           # only StatefulSets peer with own replicas
+                    continue
                 for port in ports:
                     edges.append(Edge(a.id, b.id, port, EdgeClass.PEER,
                                       Provenance.S6_PEER, evidence=f"headless/{svc.name}"))
@@ -300,7 +291,7 @@ def s6_peers(inv: Inventory) -> list:
 # ---------------------------------------------------------------- union
 def derive_needed(inv: Inventory) -> list:
     """Union of all sources, de-duplicated on (src, dst, port). When two sources
-    justify the same edge, the more direct provenance and its evidence win."""
+    justify the same edge, the first source in S1, S3, S4, S5, S6 order wins."""
     svc_index = inv.service_index()
     raw = (s1_env_endpoints(inv, svc_index)
            + s3_ingress(inv, svc_index)
@@ -309,7 +300,5 @@ def derive_needed(inv: Inventory) -> list:
            + s6_peers(inv))
     best: dict = {}
     for e in raw:
-        k = e.key()
-        if k not in best:
-            best[k] = e
+        best.setdefault(e.key(), e)
     return list(best.values())

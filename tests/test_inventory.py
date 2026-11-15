@@ -1,5 +1,5 @@
 """The live-cluster path (from_cluster) — mocked, so the kubectl→Inventory mapping
-is exercised without a cluster. It was previously untested."""
+is exercised without a cluster."""
 import json
 from unittest import mock
 
@@ -25,7 +25,6 @@ def _kubectl_output(kind):
 
 def test_from_cluster_maps_kubectl_json(monkeypatch):
     def fake_run(cmd, capture_output, text, timeout=None):
-        # cmd is a list like ["kubectl","--context","c","get","deployments",...]
         kind = cmd[cmd.index("get") + 1]
         return mock.Mock(returncode=0, stdout=_kubectl_output(kind), stderr="")
 

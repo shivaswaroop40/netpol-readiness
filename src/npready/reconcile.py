@@ -65,12 +65,12 @@ def reconcile(needed, admitted, total_workloads=0, protected=None) -> ReconcileR
     for e in needed:
         if not _in_scope(e):
             out_of_scope.append(e)
-        elif admits(e.key(), adm_keys, target_is_need=True):   # conservative: a port-unknown
-            correct.append(e)                                   # need needs an all-ports admit
+        elif admits(e.key(), adm_keys, target_is_need=True):
+            correct.append(e)
         elif e.dst in protected:
-            missing.append(e)                                   # dst is locked down -> would break
+            missing.append(e)
         else:
-            unprotected.append(e)                               # dst default-allow -> flows fine
+            unprotected.append(e)
 
     # unused = admitted edges that satisfy no need. Optimistic here on purpose: do NOT
     # over-flag an admit as removable when a port-unknown need on the pair might use it.
@@ -116,18 +116,12 @@ class ReadinessVerdict:
             "over_privilege_count": len(self.over_privilege),
             "unprotected_count": len(self.unprotected),
             "out_of_scope_count": len(self.out_of_scope),
-            "would_break": [_edge_dict(e) for e in self.would_break],
-            "over_privilege": [_edge_dict(e) for e in self.over_privilege],
-            "unprotected": [_edge_dict(e) for e in self.unprotected],
-            "out_of_scope": [_edge_dict(e) for e in self.out_of_scope],
+            "would_break": [e.to_dict() for e in self.would_break],
+            "over_privilege": [e.to_dict() for e in self.over_privilege],
+            "unprotected": [e.to_dict() for e in self.unprotected],
+            "out_of_scope": [e.to_dict() for e in self.out_of_scope],
             "rationale": self.rationale,
         }
-
-
-def _edge_dict(e: Edge) -> dict:
-    return {"src": e.src, "dst": e.dst, "port": e.port,
-            "class": e.edge_class.value, "provenance": e.provenance.value,
-            "evidence": e.evidence}
 
 
 def verdict(result: ReconcileResult, scope: str = "cluster") -> ReadinessVerdict:

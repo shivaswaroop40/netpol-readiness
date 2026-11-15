@@ -95,6 +95,11 @@ class Edge:
         comparing at identity granularity; prefer key()."""
         return (self.src, self.dst)
 
+    def to_dict(self) -> dict:
+        return {"src": self.src, "dst": self.dst, "port": self.port,
+                "class": self.edge_class.value, "provenance": self.provenance.value,
+                "evidence": self.evidence}
+
 
 # Set-arithmetic keys. Kept as plain tuples so edges from different stages (with
 # different provenance/confidence) compare equal when they describe the same reach.

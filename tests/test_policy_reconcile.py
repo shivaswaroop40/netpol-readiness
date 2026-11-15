@@ -1,5 +1,6 @@
 """Policy parsing + four-quadrant reconciliation + readiness verdict."""
 from npready import derive_admitted, derive_needed, reconcile, verdict
+from npready.model import Edge, EdgeClass, Provenance
 
 
 def _keys(edges):
@@ -62,7 +63,6 @@ def test_verdict_is_audit_when_deps_are_unprotected(mini_inventory):
 def test_verdict_is_shadow_when_protected_dep_unadmitted():
     """The real would-break case: a policy DOES protect the destination but denies a
     declared dependency."""
-    from npready.model import Edge, EdgeClass, Provenance
     needed = [Edge("a", "b", 5432, EdgeClass.IN_CLUSTER, Provenance.S1_ENV_ENDPOINT)]
     admitted = [Edge("c", "b", 5432, EdgeClass.IN_CLUSTER, Provenance.POLICY)]  # admits c->b, not a->b
     res = reconcile(needed, admitted, total_workloads=3, protected={"b"})       # b IS protected
@@ -73,7 +73,6 @@ def test_verdict_is_shadow_when_protected_dep_unadmitted():
 
 def test_verdict_enforce_when_all_needs_admitted():
     """a policy that admits exactly the needed edges yields ENFORCE."""
-    from npready.model import Edge
     needed = [Edge("a", "b", 80), Edge("a", "c", 443)]
     admitted = [Edge("a", "b", 80), Edge("a", "c", 443)]
     res = reconcile(needed, admitted, total_workloads=3, protected={"b", "c"})

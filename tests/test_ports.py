@@ -10,7 +10,11 @@ translation at every crossing, plus named ports and endPort in policy rules.
 The mini fixture cannot catch any of this: all its Services happen to use
 ``port == targetPort``, so the untranslated and translated answers coincide.
 """
+import json
+
 from npready import Inventory, derive_admitted, derive_needed, reconcile
+from npready.cli import main
+from npready.graph import _parse_endpoint
 from npready.model import Provenance
 from npready.score import admits
 
@@ -181,10 +185,6 @@ def test_admits_understands_ranges_on_both_sides():
 def test_namespace_flag_filters_offline_sources(tmp_path, capsys):
     """--namespace with --manifests must actually narrow the analysis, not just
     relabel the report header (it used to silently analyse the whole input)."""
-    import json
-
-    from npready.cli import main
-
     m = tmp_path / "two-ns.yaml"
     m.write_text(
         "apiVersion: apps/v1\nkind: Deployment\n"
@@ -205,6 +205,5 @@ def test_namespace_flag_filters_offline_sources(tmp_path, capsys):
 
 def test_jdbc_url_yields_host_and_port():
     """Spring-style JDBC URLs (Bank of Anthos ledger-db) must resolve to the host, not 'jdbc'."""
-    from npready.graph import _parse_endpoint
     assert _parse_endpoint("jdbc:postgresql://ledger-db:5432/postgresdb") == ("ledger-db", 5432)
     assert _parse_endpoint("jdbc:mysql://orders-db:3306/shop") == ("orders-db", 3306)

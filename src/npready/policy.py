@@ -39,24 +39,22 @@ def derive_admitted(inv: Inventory):
         ptypes = spec.get("policyTypes")
         affects_ingress = ptypes is None or "Ingress" in ptypes
         if affects_ingress:
-            for t in targets:
-                protected.add(t.id)
+            protected.update(t.id for t in targets)
 
         for rule in (spec.get("ingress") or []):
             # a rule's ports resolve per TARGET: a named port refers to the
             # selected pod's containerPort of that name.
             target_ports = [(t, _rule_ports(rule, t)) for t in targets]
-            for f in (rule.get("from") or [{"__all__": True}]):
-                srcs = _match_from(f, ns, wl, ns_labels)
-                for s in srcs:
-                    for t, ports in target_ports:
-                        for p in ports:
-                            # keep self-edges (X->X): a policy — including an allow-all
-                            # ingress — that admits a pod from a selector matching itself
-                            # genuinely permits StatefulSet intra-cluster peering.
-                            edges.append(Edge(s.id, t.id, p, EdgeClass.IN_CLUSTER,
-                                              Provenance.POLICY, evidence=np["metadata"]["name"]))
-    # de-dup on (src, dst, port)
+            peers = rule.get("from")
+            srcs = [s for f in peers for s in _match_from(f, ns, wl, ns_labels)] if peers else wl
+            for s in srcs:
+                for t, ports in target_ports:
+                    for p in ports:
+                        # keep self-edges (X->X): a policy — including an allow-all
+                        # ingress — that admits a pod from a selector matching itself
+                        # genuinely permits StatefulSet intra-cluster peering.
+                        edges.append(Edge(s.id, t.id, p, EdgeClass.IN_CLUSTER,
+                                          Provenance.POLICY, evidence=np["metadata"]["name"]))
     best = {}
     for e in edges:
         best.setdefault(e.key(), e)
@@ -102,8 +100,6 @@ def _match_from(f: dict, ns: str, wl: list, ns_labels: dict):
       * an EMPTY namespaceSelector {} matches ALL namespaces
       * ipBlock                     -> no workload identity, admits nothing here
     """
-    if f.get("__all__"):
-        return list(wl)                               # rule with no `from` = allow-all
     has_ns = "namespaceSelector" in f
     has_pod = "podSelector" in f
 

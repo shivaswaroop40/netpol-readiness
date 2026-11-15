@@ -1,11 +1,7 @@
-"""Regression tests for the NetworkPolicy-semantics fixes from the code review.
-Each test pins one k8s behaviour that, if wrong, flips a readiness verdict."""
-from npready import (
-    Inventory,
-    derive_admitted,
-    derive_needed,
-    reconcile,
-)
+"""NetworkPolicy-semantics regression tests. Each test pins one k8s behaviour
+that, if wrong, flips a readiness verdict."""
+from npready import Inventory, derive_admitted, derive_needed, reconcile, score
+from npready.inventory import labels_match
 from npready.model import Edge, EdgeClass, Provenance
 
 
@@ -19,7 +15,7 @@ def _ns(name, labels):
     return {"metadata": {"name": name, "labels": labels}}
 
 
-# --- Finding 1 (CRITICAL): namespaceSelector must restrict to matching namespaces ---
+# --- namespaceSelector must restrict to matching namespaces ---
 def test_namespace_selector_restricts_admission():
     """A namespaceSelector must admit pods ONLY from matching namespaces, not all."""
     snap = {
@@ -63,7 +59,7 @@ def test_empty_namespace_selector_matches_all():
     assert ("b/web", "shop/db", 5432) in keys
 
 
-# --- Finding 5: policyTypes omitted still affects ingress (protected bookkeeping) ---
+# --- policyTypes omitted still affects ingress (protected bookkeeping) ---
 def test_policytypes_omitted_marks_protected():
     snap = {"deployments": [_deploy("db", "shop", {"app": "db"})],
             "networkpolicies": [{
@@ -83,7 +79,7 @@ def test_egress_only_policy_does_not_protect_ingress():
     assert "shop/db" not in protected                        # egress-only: no ingress protection
 
 
-# --- Finding 4: reconcile must honour the port wildcard (no-ports rule = all ports) ---
+# --- reconcile must honour the port wildcard (no-ports rule = all ports) ---
 def test_reconcile_wildcard_port_satisfies_specific_need():
     needed = [Edge("a", "b", 5432, EdgeClass.IN_CLUSTER, Provenance.S1_ENV_ENDPOINT)]
     admitted = [Edge("a", "b", None, EdgeClass.IN_CLUSTER, Provenance.POLICY)]  # all ports
@@ -103,7 +99,7 @@ def test_reconcile_specific_port_does_not_oversatisfy():
     assert {(e.src, e.dst, e.port) for e in res.unused} == {("a", "b", 443)}
 
 
-# --- Finding 2: DNS/apiserver edges are out-of-scope for ingress, not "missing" ---
+# --- DNS/apiserver edges are out-of-scope for ingress, not "missing" ---
 def test_dns_and_apiserver_are_out_of_scope_not_missing():
     """S4 (DNS) and S5 (apiserver) needs must not force SHADOW; they are out of scope
     for an ingress policy and reported separately."""
@@ -154,9 +150,8 @@ def test_s6_peer_edge_satisfied_by_intra_app_policy():
     assert not res.missing
 
 
-# --- Finding 1 (FALSE-SAFE): a port-unknown need must NOT be cleared by a wrong-port admit ---
+# --- a port-unknown need must NOT be cleared by a wrong-port admit (false-safe) ---
 def test_port_unknown_need_not_satisfied_by_wrong_port_admit():
-    from npready.model import Edge, EdgeClass, Provenance
     need = [Edge("a", "b", None, EdgeClass.IN_CLUSTER, Provenance.S1_ENV_ENDPOINT)]  # port unknown
     admit = [Edge("a", "b", 443, EdgeClass.IN_CLUSTER, Provenance.POLICY)]           # specific port
     res = reconcile(need, admit, total_workloads=2, protected={"b"})
@@ -166,7 +161,6 @@ def test_port_unknown_need_not_satisfied_by_wrong_port_admit():
 
 
 def test_port_unknown_need_satisfied_by_all_ports_admit():
-    from npready.model import Edge, EdgeClass, Provenance
     need = [Edge("a", "b", None, EdgeClass.IN_CLUSTER, Provenance.S1_ENV_ENDPOINT)]
     admit = [Edge("a", "b", None, EdgeClass.IN_CLUSTER, Provenance.POLICY)]  # all ports
     res = reconcile(need, admit, total_workloads=2, protected={"b"})
@@ -175,7 +169,6 @@ def test_port_unknown_need_satisfied_by_all_ports_admit():
 
 
 def test_score_port_unknown_legit_conservative_but_attack_optimistic():
-    from npready import score
     # legit need on unknown port is DENIED by a wrong-port admit (conservative false-deny)
     r = score([("a", "b", 443)], [("a", "b", None)], [("x", "y", 22)])
     assert r["false_deny"] == 1.0
@@ -216,7 +209,6 @@ def test_ipblock_from_admits_no_workload_edge():
 
 # --- matchExpressions label selector (In/NotIn/Exists) ---
 def test_matchexpressions_selector():
-    from npready.inventory import labels_match
     labels = {"tier": "data", "app": "db"}
     assert labels_match({"matchExpressions": [{"key": "tier", "operator": "In", "values": ["data", "cache"]}]}, labels)
     assert not labels_match({"matchExpressions": [{"key": "tier", "operator": "NotIn", "values": ["data"]}]}, labels)
@@ -226,7 +218,6 @@ def test_matchexpressions_selector():
 
 # --- egress: ExternalName service -> world; external FQDN env -> world egress ---
 def test_externalname_and_external_fqdn_are_egress():
-    from npready.model import EdgeClass
     snap = {"deployments": [_deploy("app", "x", {"app": "app"})],
             "services": [{"metadata": {"name": "ext", "namespace": "x"},
                           "spec": {"type": "ExternalName", "externalName": "api.stripe.com"}}]}

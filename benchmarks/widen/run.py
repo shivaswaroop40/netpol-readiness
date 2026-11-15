@@ -50,14 +50,14 @@ def analyse(path):
     by_src = Counter(e.provenance.value for e in needed)
     # "useful" = derivation found at least one real dependency edge (S1/S3/S6),
     # i.e. something beyond the universal S4 DNS + S5 apiserver boilerplate.
-    real = sum(by_src.get(s.value, 0) for s in
+    real = sum(by_src[s.value] for s in
                (Provenance.S1_ENV_ENDPOINT, Provenance.S3_INGRESS, Provenance.S6_PEER))
     return {
         "workloads": len(inv.workloads),
         "services": len(inv.services),
         "netpols": len(inv.networkpolicies),
         "needed": len(needed),
-        "by_source": {s.value: by_src.get(s.value, 0) for s in SOURCES},
+        "by_source": {s.value: by_src[s.value] for s in SOURCES},
         "real_dependency_edges": real,
         "would_break": len(res.missing),
         "over_priv": len(res.unused),
@@ -123,7 +123,6 @@ def main():
           + ", ".join(r["app"] for r in useless))
     if crashed:
         print("  -> CRASHED: " + ", ".join(f"{r['app']} ({r['error']})" for r in crashed))
-    # source hit-rate
     print("\nsource hit-rate (apps where the source found >0 edges):")
     for s in SOURCES:
         hits = sum(1 for r in rows if not r.get("error") and r["by_source"][s.value] > 0)

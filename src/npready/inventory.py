@@ -10,6 +10,7 @@ Nothing here mutates a cluster. The live path issues only ``kubectl get``.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -30,7 +31,7 @@ class Workload:
     env: list = field(default_factory=list)          # list[(name, value)]
     host_network: bool = False
     configmap_refs: set = field(default_factory=set)  # ConfigMap names this workload consumes
-    argv: str = ""                                     # container command+args, joined (S7 scan)
+    argv: str = ""                                     # container command+args, joined
     port_names: dict = field(default_factory=dict)     # containerPort name -> number
 
     @property
@@ -111,7 +112,6 @@ class Inventory:
     @classmethod
     def from_manifests(cls, path: str) -> Inventory:
         """Load from a directory (or single file) of YAML manifests."""
-        import os
         docs = []
         files = []
         if os.path.isdir(path):
@@ -164,8 +164,9 @@ class Inventory:
             for w in raw.get(kind, []):
                 meta = w.get("metadata", {})
                 spec = w.get("spec", {})
-                tmpl = (spec.get("template") or {}).get("spec", {}) or {}
-                tmeta = (spec.get("template") or {}).get("metadata", {}) or {}
+                template = spec.get("template") or {}
+                tmpl = template.get("spec") or {}
+                tmeta = template.get("metadata") or {}
                 env, cm_refs, argv, port_names = [], set(), [], {}
                 containers = (tmpl.get("containers") or []) + (tmpl.get("initContainers") or [])
                 for c in containers:
@@ -173,10 +174,11 @@ class Inventory:
                         if cp.get("name") and cp.get("containerPort"):
                             port_names[cp["name"]] = cp["containerPort"]
                     for e in (c.get("env") or []):
-                        if isinstance(e, dict) and e.get("value") is not None:
+                        if not isinstance(e, dict):
+                            continue
+                        if e.get("value") is not None:
                             env.append((e["name"], str(e["value"])))
-                        # envFrom-style single ref
-                        ref = ((e or {}).get("valueFrom") or {}).get("configMapKeyRef") or {}
+                        ref = (e.get("valueFrom") or {}).get("configMapKeyRef") or {}
                         if ref.get("name"):
                             cm_refs.add(ref["name"])
                     for ef in (c.get("envFrom") or []):
@@ -223,8 +225,7 @@ class Inventory:
         # Synthesise it for namespaces we saw workloads in but no Namespace object for,
         # so a namespaceSelector on that well-known label still resolves.
         for w in workloads:
-            ns_labels.setdefault(w.ns, {})
-            ns_labels[w.ns].setdefault("kubernetes.io/metadata.name", w.ns)
+            ns_labels.setdefault(w.ns, {}).setdefault("kubernetes.io/metadata.name", w.ns)
         cms = {}
         for cm in raw.get("configmaps", []):
             m = cm.get("metadata", {})
@@ -297,21 +298,18 @@ class Inventory:
         DNAT (clients dial pod IPs directly), so there the dialed port already is
         the pod port.
         """
-        if svc.kind == "Headless" and dialed is not None:
-            return dialed
-        entry = None
         if dialed is not None:
             entry = next((e for e in svc.ports if e[0] == dialed), None)
-            if entry is None:
-                return dialed          # dialing a port the Service does not declare
+            if svc.kind == "Headless" or entry is None:
+                return dialed          # no DNAT, or a port the Service does not declare
         elif port_name is not None:
             entry = next((e for e in svc.ports if e[2] == port_name), None)
             if entry is None:
                 return None            # named backend port the Service lacks
-        if entry is None:
-            entry = svc.ports[0] if svc.ports else None
-        if entry is None:
-            return dialed
+        elif svc.ports:
+            entry = svc.ports[0]
+        else:
+            return None
         return self.endpoint_port(svc, entry)
 
     def workloads_backing(self, svc: Service) -> list:
