@@ -47,6 +47,7 @@ class Service:
     ports: list = field(default_factory=list)        # list[(port, targetPort, name)]
     kind: str = "ClusterIP"                            # ClusterIP | NodePort | LoadBalancer | ExternalName | Headless
     external_name: Optional[str] = None
+    source_ranges: list = field(default_factory=list)  # spec.loadBalancerSourceRanges (CIDRs)
 
     @property
     def id(self) -> str:
@@ -216,6 +217,7 @@ class Inventory:
                        for p in (spec.get("ports") or [])],
                 kind=stype,
                 external_name=spec.get("externalName"),
+                source_ranges=list(spec.get("loadBalancerSourceRanges") or []),
             ))
         ns_labels = {}
         for n in raw.get("namespaces", []):

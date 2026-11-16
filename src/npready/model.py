@@ -41,6 +41,7 @@ class Provenance(str, Enum):
     S4_DNS = "s4_dns"              # cluster DNS invariant (every pod -> kube-dns)
     S5_APISERVER = "s5_apiserver"  # RBAC binding -> workload uses kube-apiserver
     S6_PEER = "s6_peer"            # headless Service / StatefulSet peer set
+    S7_EXPOSED = "s7_exposed"      # LoadBalancer/NodePort Service -> backend (opt-in)
     POLICY = "policy"              # admitted by an existing NetworkPolicy
     ATTACK = "attack"              # an adversarial edge (ground-truth A)
 

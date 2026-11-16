@@ -4,6 +4,7 @@
     npready readiness   needed vs admitted -> quadrants -> audit/shadow/enforce
     npready score       evaluate a generated policy against ground truth
     npready fuse        coverage by source: config vs observation vs their union
+    npready render      write ingress NetworkPolicies (declared + observed, opt-in entry rules)
     npready attacks     print the ATT&CK-mapped attack roster (deployed via Helm)
 
 All read paths are offline-capable: pass --manifests DIR to analyse without a
@@ -22,6 +23,7 @@ from .attacks import OWASP_K8S, ROSTER
 from .graph import derive_needed
 from .inventory import Inventory
 from .policy import derive_admitted
+from .render import render_policies
 from .reconcile import Gate, reconcile, verdict
 from .score import decompose_false_deny, fmt_port, fuse, score
 
@@ -75,7 +77,7 @@ def _add_granularity_arg(p):
 # ------------------------------------------------------------------ derive
 def cmd_derive(args):
     inv = _load_inventory(args)
-    needed = derive_needed(inv)
+    needed = derive_needed(inv, entry=args.entry)
     by_prov = Counter(e.provenance.value for e in needed)
     print(f"config-derived NEEDED graph: {len(needed)} edges "
           f"from {len(inv.workloads)} workloads, {len(inv.services)} services")
@@ -86,6 +88,44 @@ def cmd_derive(args):
     if args.json:
         json.dump({"needed": [e.to_dict() for e in needed]}, open(args.json, "w"), indent=2)
         print(f"wrote {args.json}")
+    return 0
+
+
+# ------------------------------------------------------------------ render
+def _controller(spec):
+    """Parse ``NAMESPACE:key=value[,key=value]`` into ``(namespace, labels)``."""
+    if not spec:
+        return None
+    ns, _, sel = spec.partition(":")
+    labels = dict(kv.split("=", 1) for kv in sel.split(",") if "=" in kv)
+    if not ns or not labels:
+        raise SystemExit("--ingress-controller expects NAMESPACE:key=value[,key=value]")
+    return ns, labels
+
+
+def cmd_render(args):
+    import yaml
+    inv = _load_inventory(args)
+    declared = [] if args.no_declared else derive_needed(inv, entry=args.entry)
+    observed = _edges(args.observed) if args.observed else []
+    edges = {}
+    for e in declared:
+        edges.setdefault(e.key(), e.key())
+    for e in observed:
+        k = (tuple(e) + (None,))[:3]
+        edges.setdefault(k, k)
+    policies, skipped = render_policies(inv, edges.values(), _controller(args.ingress_controller))
+    text = yaml.safe_dump_all(policies, sort_keys=False)
+    if args.out:
+        open(args.out, "w").write(text)
+    else:
+        sys.stdout.write(text)
+    allow = sum(1 for p in policies if p["metadata"]["name"].startswith("allow-"))
+    print(f"rendered {len(policies)} NetworkPolicies ({allow} allow, {len(policies) - allow} deny-all) "
+          f"from {len(declared)} declared and {len(observed)} observed edges"
+          + (f"; wrote {args.out}" if args.out else ""), file=sys.stderr)
+    for (e, why) in skipped:
+        print(f"  skipped {e[0]} -> {e[1]}:{_p(e[2])}: {why}", file=sys.stderr)
     return 0
 
 
@@ -232,7 +272,20 @@ def build_parser() -> argparse.ArgumentParser:
     d = sub.add_parser("derive", help="config-derived NEEDED dependency graph")
     _add_source_args(d)
     d.add_argument("--limit", type=int, default=40)
+    d.add_argument("--entry", action="store_true",
+                   help="also derive edges from outside the cluster into LoadBalancer/NodePort Services")
     d.set_defaults(func=cmd_derive)
+
+    rd = sub.add_parser("render", help="write ingress NetworkPolicies for declared (+ observed) edges")
+    _add_source_args(rd)
+    rd.add_argument("--observed", help="JSON list of observed [src,dst,port] edges to fuse in")
+    rd.add_argument("--no-declared", action="store_true", help="render only the observed edges")
+    rd.add_argument("--entry", action="store_true",
+                    help="admit outside clients into LoadBalancer/NodePort Services (ipBlock rules)")
+    rd.add_argument("--ingress-controller", metavar="NS:key=val[,key=val]",
+                    help="pods that run the Ingress controller, so Ingress routes can be rendered")
+    rd.add_argument("--out", metavar="FILE", help="write the YAML here instead of stdout")
+    rd.set_defaults(func=cmd_render)
 
     r = sub.add_parser("readiness", help="four-quadrant readiness + audit/shadow/enforce")
     _add_source_args(r)

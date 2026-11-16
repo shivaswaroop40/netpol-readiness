@@ -154,6 +154,23 @@ window fires; on one that hard-codes them, observation is the only source. The u
 It is safe by construction: config-declared edges name no attack path, so
 `declared ∩ attacks = ∅` at port granularity (checked, not assumed).
 
+### 6. Write the fused policy
+
+`render` writes ingress NetworkPolicies for the declared edges plus an observed edge set:
+one `allow-<workload>` per reached workload and a deny-all policy for every other one.
+
+```bash
+npready render --manifests ./deploy/ --observed O.json --out policy.yaml
+# also admit outside clients into LoadBalancer/NodePort Services, on their target port:
+npready render --manifests ./deploy/ --observed O.json --entry --out policy.yaml
+# render Ingress routes as a rule for the controller pods:
+npready render --manifests ./deploy/ --ingress-controller ingress-nginx:app.kubernetes.io/name=ingress-nginx
+```
+
+Which entry points are public is an operator decision, so entry rules are opt-in.
+`--entry` honours `loadBalancerSourceRanges`; with none set it admits `0.0.0.0/0` on the
+Service's target port only.
+
 ## How the readiness analysis works
 
 `needed` edges come from five independent, auditable sources — every edge records the

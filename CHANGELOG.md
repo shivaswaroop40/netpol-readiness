@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.4.0] - 2026-11-16
+
+### Added
+- `npready render`: writes ingress NetworkPolicies for the declared edges, fused with an
+  observed edge set (`--observed`). One `allow-<workload>` per reached workload and a
+  `deny-<workload>` (empty ingress) for every other workload, so each workload is isolated.
+- Entry edges, opt-in (`--entry` on `derive` and `render`): source S7 turns LoadBalancer and
+  NodePort Services into `world -> backend` edges on the target port, rendered as `ipBlock`
+  rules that honour `loadBalancerSourceRanges` (default `0.0.0.0/0`).
+- `--ingress-controller NS:key=val`: renders Ingress routes (S3) as a rule for the named
+  controller pods; without it they are reported as skipped.
+- `tests/test_entry_render.py`.
+
+### Unchanged
+- Without `--entry`, `derive` output is byte-identical to 0.3.0.
+
 ## [0.3.0] - 2026-09-21
 
 ### Added

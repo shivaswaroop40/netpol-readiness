@@ -24,6 +24,7 @@ Sources (each independent, each auditable):
   S4  cluster DNS invariant         every pod resolves names         -> workload -> <dns svc>:53
   S5  RBAC bindings                 ServiceAccount bound to a role   -> workload -> kube-apiserver
   S6  headless Service peers        StatefulSet behind headless svc  -> peer <-> peer
+  S7  exposed Services (opt-in)     LoadBalancer/NodePort Service    -> world -> backend
 
 S2 (the Service catalog) is not a separate emitter — it is the resolver that makes
 S1 and S3 verification rather than guesswork.
@@ -288,16 +289,38 @@ def s6_peers(inv: Inventory) -> list:
     return edges
 
 
+# ---------------------------------------------------------------- S7
+def s7_exposed(inv: Inventory) -> list:
+    """A LoadBalancer or NodePort Service exposes its backends to clients outside the
+    cluster. Those clients have no workload identity, so the edge's source is the
+    ``world`` token, and the port is the pod-side ``targetPort`` the Service forwards
+    to. ``loadBalancerSourceRanges``, if set, narrows who may connect; the renderer
+    reads it from the Service. Opt-in (``entry=True``): which entry points are public
+    is an operator decision, so it is only derived when asked for."""
+    edges = []
+    for svc in inv.services:
+        if svc.kind not in ("LoadBalancer", "NodePort"):
+            continue
+        for entry in svc.ports:
+            port = inv.endpoint_port(svc, entry)
+            for tgt in inv.workloads_backing(svc):
+                edges.append(Edge("world", tgt.id, port, EdgeClass.ENTRY,
+                                  Provenance.S7_EXPOSED, evidence=f"service/{svc.name}"))
+    return edges
+
+
 # ---------------------------------------------------------------- union
-def derive_needed(inv: Inventory) -> list:
+def derive_needed(inv: Inventory, entry: bool = False) -> list:
     """Union of all sources, de-duplicated on (src, dst, port). When two sources
-    justify the same edge, the first source in S1, S3, S4, S5, S6 order wins."""
+    justify the same edge, the first source in S1, S3, S4, S5, S6, S7 order wins.
+    ``entry=True`` adds S7, the edges from outside the cluster into exposed Services."""
     svc_index = inv.service_index()
     raw = (s1_env_endpoints(inv, svc_index)
            + s3_ingress(inv, svc_index)
            + s4_dns(inv)
            + s5_apiserver(inv)
-           + s6_peers(inv))
+           + s6_peers(inv)
+           + (s7_exposed(inv) if entry else []))
     best: dict = {}
     for e in raw:
         best.setdefault(e.key(), e)
