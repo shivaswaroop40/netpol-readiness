@@ -23,8 +23,8 @@ from .attacks import OWASP_K8S, ROSTER
 from .graph import derive_needed
 from .inventory import Inventory
 from .policy import derive_admitted
-from .render import render_policies
 from .reconcile import Gate, reconcile, verdict
+from .render import render_policies
 from .score import decompose_false_deny, fmt_port, fuse, score
 
 GRANULARITY_LABEL = {"port": "(src,dst,port)", "pair": "(src,dst)"}
